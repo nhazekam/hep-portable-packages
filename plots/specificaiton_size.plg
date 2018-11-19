@@ -1,0 +1,15 @@
+# Scale font and line width (dpi) by changing the size! It will always display stretched.
+set terminal svg size 400,300 enhanced fname 'arial'  fsize 10 butt solid
+set output 'out.svg'
+
+# Key means label...
+set key inside top left
+set xlabel 'Number of Instances'
+set ylabel 'Disk Space (M)'
+set title 'Some Data'
+set style data histograms
+set style histogram rowstacked
+set boxwidth 1 relative
+set style fill solid 1.0 border -1
+set datafile separator " "
+plot 'data.txt' using 2:xtic(1) t "Data", '' using 3 t "Registry", '' using 4 t "Images"
