@@ -4,6 +4,7 @@
 \usepackage{mathtools}
 \usepackage{framed}
 \usepackage{cleveref}
+\usepackage{hyperref}
 
 \begin{document}
 \title{Projecting Global Filesystems into Local Containers for High-throughput Computing on HPC Resources}
@@ -78,19 +79,17 @@ Conclusion
 \fi
 
 \author{
-\IEEEauthorblockN{Nicholas Hazekamp}
-\IEEEauthorblockA{University of Notre Dame \\
-Notre Dame, Indiana 46556 \\
-nhazekam@nd.edu}
-\and
 \IEEEauthorblockN{Tim Shaffer}
 \IEEEauthorblockA{University of Notre Dame \\
 Notre Dame, Indiana 46556 \\
 tshaffe1@nd.edu}
 \and
+\IEEEauthorblockN{Nicholas Hazekamp}
+\IEEEauthorblockA{University of Notre Dame \\
+Notre Dame, Indiana 46556 \\
+nhazekam@nd.edu}
+\and
 \IEEEauthorblockN{Jakob Blomer}
-\IEEEauthorblockN{\&}
-\IEEEauthorblockN{P. Samuel M. Teuber}
 \and
 \IEEEauthorblockN{Douglas Thain}
 \IEEEauthorblockA{University of Notre Dame \\
@@ -102,62 +101,76 @@ dthain@nd.edu}
 \maketitle
 
 \begin{abstract}
-High energy physics research at CERN has a large and rapidly growing need for computation.
-To bridge the gap, may scientists are looking to HPC resources.
-HPC environments provides a platform for large
-batch computation, similar to the WLCG.
-However, the restrictions on computation,
-such as limited internet access and prohibiting FUSE,
-clash with HEP's reliance on CVMFS as global filesystem
-for software.
-As most LHC jobs uses 
-only a small portion of CVMFS,
-a more fine-grained approach to preparing container images 
-is needed to limit creation time and storage.
-Shrinkwrap introduces a method for creating and
-updating projections, but a framework for managing
-theses is needed.
-...
+Scientific applications often depend on large, complex software repositories containing libraries, tools, and frameworks in multiple versions and platforms to support many researchers.
+As a practical necessity, software repos are most commonly distributed via shared or global filesystems.
+In moving existing research to HPC environments, however,
+scientists must work around restrictions that can interfere with global software delivery methods.
+To illustrate these challenges,
+we examine CVMFS, the CernVM File System.
+CVMFS is a global, distributed filesystem that provides read-only access to experiment software and configurations for high energy physics research at CERN.
+CVMFS requires a number of network and OS configurations that are incompatible with a restrictive HPC environment.
+In this work, we introduce a set of tools and procedures for \emph{projecting} the global filesystem (or parts thereof) into local container images suitable for HPC sites.
+As part of our evaluation,
+we found that using local approximations of a global filesystem tends to introduce problems of its own in terms of compute and storage overhead.
+We thus examined several declarative and profiling-based approaches to creating more fine-grained projections to fit application requirements,
+and propose a strategy for efficiently managing these projected container images at an HPC site.
+Using our projection tools and image management strategy,
+we implemented a proof-of-concept submission system for running existing HEP analysis tasks in an HPC environment.
 \end{abstract}
-
-
 
 \section{Introduction}
 
-High energy physics research at CERN has a large and rapidly growing need for computation.
-With upgrades to the LHC scheduled in the coming years,
-the amount of computation required will increase dramatically.
-The simulation and analysis workloads at CERN are primarily performed using software distributed
-via the CernVM File System (CVMFS).
-CMVFS provides a read-only, distributed file system using HTTP for network transport and extensive local
-caching to rapidly distribute updates in software across the WLCG.
-The Worldwide LHC Computing Grid (WLCG) currently satisfies most of the computational needs of the LHC experiments.
+Scientific research has a large and rapidly growing need for computation.
+Researchers have a number of options at their disposal to meet those needs,
+including campus-local or organization-local resources,
+cloud providers,
+grid computing,
+and large HPC sites.
+Moving applications between these classes of resources can present problems,
+as the assumptions made during development may no longer hold.
+For example, organization-local resources and some grid sites commonly provide access to shared filesystems at each compute node.
+In addition, there is some flexibility in system configuration to support an organization's primary research activity.
+A new computing environment may be much less open to changes for a specific application,
+especially large, multi-tenant resources such as HPC sites.
+In these cases, it is left to scientists to adapt their application software to the available resources.
+
+Many of our research collaborators have experienced significant frustration in preparing an existing scientific application to run on a new type of resource.
+As a concrete example for this work,
+we consider the challenges in running simulation and analysis workloads at CERN on HPC sites.
+These applications assume several pieces of infrastructure to be in place and require some configuration and customization to the compute environment.
+This is not an issue when running on Worldwide LHC Computing Grid~(WLCG),
+which is a dedicated resource built to meet CERN's substantial computing needs.
+The WLCG currently satisfies most of the computational needs of the LHC experiments at CERN.
 With the upcoming high luminosity upgrades to the LHC,
-the computational resources needed will nearly double (?? check this) by 2026,
+the computational resources needed will will increase by at least an order of magnitude by 2026,
 % On CERN's page it estimate 50-100X need, argonne had a report that was 10-20X
 prompting researchers to turn to available high performance computing (HPC) resources to meet demand.
+%In contrast with the WLCG's single slot submissions,
+%HPC applications typically consist of parallel jobs using several cores up to a full machine for each submission.
 
-HPC environments provides a platform for large
-batch computation, similar to the WLCG.
-In contrast with the WLCG's single slot submissions,
-HPC applications typically consist of parallel jobs using several cores up to a full machine for each submission.
-Most HPC systems have site-specific configuration and security requirements.
+Most HPC systems, however, have site-specific configuration and security requirements.
 These can take the form of limited network availability at computation nodes,
 limited container support,
-and restricted access to privileged system operations (such as FUSE).
-These restrictions present challenges when porting CERN's HEP applications,
-such as difficulties submitting tasks,
-inability to access required software,
-and additional time spent converting between image and container formats.
+and restricted access to privileged system features (such as FUSE support).
+These new restrictions present challenges when porting existing scientific applications,
+which expect required software to be readily available,
+make a number of assumptions about how the system should be configured,
+and may not be designed with tasks such as converting between image and container formats in mind.
 
+In the case of the simulation and analysis workloads at CERN,
+unrestricted network access and FUSE support are critical for providing global filesystem access.
+Nearly all research software used at CERN assumes the availability of the CernVM File System (CVMFS),
+a distributed global filesystem built for distributing software and configuration data.
+CMVFS provides a read-only, distributed file system using HTTP for network transport and extensive local
+caching to rapidly distribute updates in software across the WLCG.
 Dependence on CVMFS to distribute experiment software currently makes it impossible to take advantage of many HPC sites.
 CVMFS requires unrestricted network access and is implemented as a FUSE module,
-which sites often disallow for security and management reasons.
+both of which sites often disallow for security and management reasons.
+
 Some sites, such as NERSC,
 have attempted workarounds for providing CVMFS,
-such as creating large images containing all of the software stored in CVMFS (500GB-1TB) or
-maintaining separate specialize systems for distributing 
-CVMFS, such as DVMFS.
+such as creating large images several terabytes in size that contain all of the software stored in CVMFS or
+maintaining local mirrors of CVMFS available via site-local shared filesystems.
 However, both of these existing solutions require 
 hours to days of attention from system administrators to deploy or update,
 which leads to lag between the available software and the current version.
@@ -167,22 +180,43 @@ Since each LHC experiment job uses
 only a relatively small portion of CVMFS,
 a more fine-grained approach to preparing container images would reduce the time spent creating images and allow for more precise control of the software versions in use.
 This could also reduce the storage required at each worker node and the network bandwidth spent transferring images.
-We modified the reference implementation of CVMFS to allow us to capture the filesystem interactions of a live HEP applications.
-Using this live tracing or static analysis,
+It is often possible to determine dependencies for particular applications statically by examining submission commands, setup scripts, etc.
+This approach, while reliable, tends to be labor-intensive and tied to specific experiments and software stacks.
+We therefore modified the reference implementation of CVMFS to allow us to capture the filesystem interactions of a live HEP applications.
+Using live tracing and static analysis,
 we are able to determine exactly which parts of CVMFS must be included in a container image for a particular job.
-We developed a tool, Shrinkwrap, that can \emph{project} CVMFS (or a subset thereof) at a particular version into a traditional filesystem.
+We developed a tool, Shrinkwrap, that can efficiently \emph{project} CVMFS (or a subset thereof) at a particular version into a traditional filesystem.
 Such a \emph{projection} of CVMFS is suitable for inclusion in a static container image that does not depend on FUSE or network access.
 
-When providing CMVFS at an HPC site,
-the cost of creating, distributing, and storing customized images for a large number of jobs and users imposes additional challenges.
-The na\"{i}ve approach of creating a projection of CVMFS for each job results in significant computation, storage, and bandwidth overhead.
-Acknowledging that jobs frequently have significant overlap in dependencies,
-we propose a metric for determining the similarity between projections.
-This gives the possibility of identifying existing container images that could be re-used to fulfill a new submission.
-In addition, we explore the trade-offs in automatically augmenting existing projections to allow container images to support multiple distinct job types.
-We bring these tools together to propose a potential enhancement to a batch scheduler for making online decisions about whether to create, reuse, or augment projections of CVMFS to efficiently support high-throughput HEP jobs on HPC resources. 
+While working with projected container images and Shrinkwrap,
+we found that the cost of creating, distributing, and storing customized images for a large number of jobs and users creates unexpected challenges as well.
+Shrinkwrap is designed to efficiently manage projections by deduplicating data in the filesystem.
+Disk images, however, must contain complete copies of all included data.
+The na\"{i}ve approach of creating a projection of CVMFS for each application results in frequent duplication of data and significant overhead in terms of computation and bandwidth.
+Depending on the granularity of the projection,
+image creation time can easily exceed individual job's actual compute time.
+The alternative extreme, i.e.\ building a single large image that satisfies the requirements of all applications,
+forces all jobs to use the same repository revision,
+which can result in incompatibilities across applications.
+Updates to the repository or changes in applications and requirements can again result in large amounts of overhead due to frequently creating, transferring, and storing these very large images.
 
-%TODO summarize results
+Observing that jobs frequently have significant overlap in dependencies,
+we designed a system to more efficiently manage container images on job submission.
+First, we defined a metric for determining the similarity between projections.
+This gives the possibility of identifying existing container images that could be re-used to fulfill a new request.
+We also determined that in some cases,
+it is less expensive to augment an existing, similar projection to allow a single container image to support multiple distinct applications.
+We bring these tools together as a proof-of-concept submission system for making online decisions about whether to create, reuse, or augment container images to efficiently support high-throughput HEP jobs on HPC resources. 
+
+Compared to existing solutions,
+Shrinkwrap created more compact projections than traditional methods such as rsync copies,
+and allowed for more efficient updates to existing projections.
+Based on the existing projects to produce static CVMFS container images and traces of benchmark applications,
+we examined the sizes and structures of several projected container images.
+Based on these properties,
+we simulated the behavior of our image management system over a large number of job submissions.
+We found that our approach can effectively manage the container images for a continuous stream of submissions with varying software dependencies and versions with less storage overhead than creating a new image per application.
+In addition, our results show that applications can still take advantage of precise dependency and version specifications to reduce image creation and transfer overhead compared to working with large/complete mirrored copies of CVMFS.
 
 \section{Background and Challenges}
 
@@ -264,16 +298,27 @@ it increases the job startup time and places additional requirements on the infr
 To be usable in production, DVMFS requires a sufficient number of DVS servers to be provisioned.
 DVMFS is nonetheless a viable solution as long as the costs of developing/maintaining the service and allocating infrastructure do not grow too high.
 
-\section{File Specifications}
+\section{Defining Application Dependencies}
 
-The first step in addressing the high footprint 
-of CVMFS repositories is to provide accurate 
-specifications of the files, libraries, and packages
-needed for each experiment.
-These file specifications can then be used when 
+While the entirety of CVMFS is fairly large,
+a single application would never use every piece of data.
+Rather than attempting to provide a complete copy of CVMFS locally,
+which entails significant storage costs,
+we could instead provide a limited subset of the complete filesystem that is sufficient for a particular job.
+This approach is more in line with traditional software packaging practices,
+where software is provided as needed in the form of RPM files or another similar format.
+Working with software packages is simpler in that dependencies are explicitly specified in the package file or database.
+With CVMFS, no such definitive specification exists.
+This issue is common to shared/global filesystems,
+since users expect the complete contents to be available on demand and so devote little time to explicitly defining dependencies and other requirements.
+
+In the case of CVMFS,
+building an accurate 
+specification of the files, libraries, and packages
+needed for each experiment is the first step toward creating usable container images.
+Such file specifications can be used when 
 projecting CVMFS into realized filesystems.
-In general, the ability to project global filesystems 
-hinges on the clarity of the file specification.
+The correctness and storage overhead of the projected filesystem hinges on the clarity and accuracy of the file specification.
 File specifications can be derived from several
 different sources, such as 
 usage traces, static analysis, or package listings.
@@ -361,8 +406,9 @@ for a lean package that provides coverage for
 an experiment.
 
 \subsection{Trace Sampling}
-Tracing was selected as it provides a consistent 
+Tracing is attractive as it provides a consistent 
 behavior between experiments and use cases.
+In addition, it is easier to automate and sample arbitrary applications without assistance from each user.
 This allows the solution to port between applications
 quickly without having to delve in to the applications
 specific configuration.
@@ -418,12 +464,14 @@ specification can be tracked:
 \end{table}
 
 
-\subsection{Defined Consistency}
-In order for a file specification to accommodate 
-the need for describing the structure and contents
-the specification goes beyond a generic file listing.
+\subsection{Unique Consistency Requirements}
+CVMFS differs from traditional POSIX filesystems in that previous versions of all content remain available.
+A researcher may specify the precise revision under which an application is known to run.
+Thus the same path may refer to two completely different files for a pair of applications.
+This is beneficial from the standpoint of reliability and reproducibility,
+but complicates the process of projection.
 A file specification needs to include enough information
-to establish the directory structure and verify the contents.
+to establish the directory structure and verify the contents at a specific revision.
 This can be done in several ways, 
 such as computing the checksum of contents,
 using global revision numbers, 
@@ -453,7 +501,7 @@ This method leaves much to be desired when using common stable
 packages that change irregularly.
 
 Aside from computing and checking the contents of the
-repository or it's files, it is possible to verify the
+repository or its files, it is possible to verify the
 software using experiment computation.
 This is a common method used to testing software
 and works equally when the target software provides
@@ -471,11 +519,53 @@ compare in the future for verification, but
 this relies on deterministic code which is 
 not always the assumption in HEP computing.
 
+
+
+\begin{table*}[t]
+\begin{center}
+\begin{tabular}{|c|r r r|r r r|}
+\hline
+CVMFS & & ls -lr & & & Shrinkwrap & \\
+Repository & Total Size (B) & inode Count & Time to walk & 
+  Data Files & Deduped Data Files & Dedup Bytes \\ \hline
+%alice-ocdb & 482,642,307,428 & 1,621,661 & 2:22 &
+% 1,621,282 & 1,595 & 24,433,131,203\\
+alice & 3,980,875,747,986 & 27,322,350 & 51:53 & 
+  797,404 & 23,996,541 & 2,098,509,015,172\\
+%atlas-condb & 719,548,941,240 & 11,781 & 0:04 &
+%  10,940 & 229 & 471,492,086 \\
+atlas & 6,195,013,689,056 & 120,598,601 & 3:48:07 &
+ 8,823,179 & 85,554,444 & 3,760,712,059,548 \\
+boss & 120,048,527,315 & 2,418,025 & 4:18 &
+ 256,061 & 1,868,192 & 72,301,955,666\\
+cms & 581,789,406,847 & 26,224,567 & 1:07:30 &
+ 18,667,178 & 101,448,867 & *2,242,658,825,701\\
+cvmfs-config & 16,546 & 9 & 0:00 &
+ 2 & 0 & 0 \\
+geant4 & 297,571,283,648 & 7,128,024 & 10:36 &
+ 323,280 & 6,219,891 & 68,381,969,660 \\
+grid & 30,642,826,259 & 714,235 & 1:17 &
+ 141,622 & 583,923 & 18,804,003,040 \\
+lhcb & 2,134,893,079,440 & 33,736,802 & 1:01:26 &
+ 10,032,339 & 20,406,235 & 368,070,277,634 \\
+na61 & 5,222,967,734 & 25,602 & 0:02 &
+ 8,609 & 15,001 & 2,425,507,431 \\
+sft & 3,996,527,275,237 & 128,608,792 & 4:17:58 &
+ 6,821,699 & 63,210,139 & 2,016,609,810,573 \\ 
+ \hline
+\end{tabular}
+\caption{CVMFS repository sizes.}
+\label{tab:repo-sizes}
+This table shows the size, number of inodes, and the amount
+of duplicate data that is eliminated using CVMFS.
+\end{center}
+\end{table*}
+
+\if 0
 I AM NOT SURE WHICH WE WILL USE. WRAP THIS UP LATER.
+\fi
 
 \section{Realization of CVMFS Projection}
-
-
 
 \subsection{Definition of Projection}
 
@@ -573,7 +663,7 @@ COMPARES RSYNC AND SHRINKWRAP. UNCVMFS CANT COMPETE.
 \label{figure:projection-comp}
 \end{figure}
 
-\subsection{Packing Projections}
+\subsection{Packaging Projections}
 
 All of the above methods describe utilize CVMFS
 and rely on the internet connection to create
@@ -589,7 +679,7 @@ versus SquashFS images.
 The goal is to find a flexible, compatible intermediate
 format that allows projections to be moved between sites
 and technologies.
-For this purpose, DOcker images, Singularity images, and 
+For this purpose, Docker images, Singularity images, and 
 SqaushFS are compared on their time to create,
 storage requirements, and most importantly compatibility
 with several used technologies, namely 
@@ -603,15 +693,6 @@ GRAPH COMPARING BUILD TIME
 
 GRAPH COMPARING STORAGE SPACE
 
-TABLE COMPARING COMPATIBILITY AND SUPPORT
-
-%MERGING PROJECTIONS
-
-%INCOMPATIBLE PROJECTIONS
-%It is often the case when using CVMFS
-%an analysis job requires pieces of several repositories.
-%As a result a method for merging and verifying that these
-%repositories are compatible is needed.
 
 When creating these images for analysis jobs its often the case that several
 of these images may be created and used in the system.
@@ -632,12 +713,12 @@ provide responsive execution of HEP analysis on HPC.
 \label{figure:spec-size}
 \end{figure}
 
-\subsection{Use Cases}
-Here we illustrate several real world use cases.
-These use cases are being used as the existing solutions
-were not feasible and a new approach was needed.
-In analyzing these use cases we can see the beginnings of
-the problem outlined in the previous subsection.
+\subsection{Use Cases of Shrinkwrap}
+%Here we illustrate several real world use cases.
+%These use cases are being used as the existing solutions
+%were not feasible and a new approach was needed.
+%In analyzing these use cases we can see the beginnings of
+%the problem outlined in the previous subsection.
 
 \subsubsection{Atlas at NERSC}
 
@@ -653,54 +734,75 @@ For the image export the workflow’s resource-needs would be examined through t
 
 \section{Managing Projections as a Site-wide Resource}
 
-A major queston not addressed by the Shrinkwrap tool is how to manage images after creation.
-In the case of a small number of manually created container images,
-this is not a serious problem.
-Thus for integrating with the existing systems at NERSC,
-Shrinkwrap alone might be sufficient.
-We would also like to support CVMFS as a site-wide service,
-e.g.\ with a batch system plugin that can automatically prepare container images on job submission.
-This both minimizes direct administrator burden and more closely approximates user experience on other resources like the WLCG.
 With static analysis and dynamic tracing of tasks,
-we have ways to choose subsets of CVMFS to project to run specific tasks.
-The user can collect this information themself,
+we have methods to choose subsets of CVMFS to project to run specific tasks.
+Users can collect this information themselves,
 or tracing, too, could be handled automatically.
 We have seen two approaches to this in section ??.
-If the same types of jobs are also run on other resources such as the WLCG,
-it is possible to instrument a fraction of runs to build a profile of the type of task.
-Alternatively, we could integrate tracing with image creation by automatically running exemplar tasks on the WLCG or on dedicated bridge nodes and collecting traces as necessary.
-Assuming that accurate dependency information is available via some means,
+For applications already running on the WLCG,
+it is also possible to instrument a fraction of runs to build a profile of the type of task.
+Alternatively, we could integrate tracing with image creation by automatically running a small number of sample tasks on the WLCG or on dedicated bridge nodes and collecting traces as necessary.
+These approaches give a fair amount of flexibility in determining accurate dependency information.
+Based on this information,
 we are interested in automatically providing suitable projections of CVMFS to users.
+
+Shrinkwrap provides a mechinsm for projecting parts of CVMFS,
+but is not by itself a complete solution as it does not integrate with job submission or manage images after creation.
+In the case of a small number of manually created container images,
+this is not a serious problem.
+Administrators could manage a small collection of images in this case and adjust jobs to work with their setup.
+Thus for integrating with the existing systems at NERSC,
+Shrinkwrap alone might be sufficient.
+To support CVMFS as a site-wide service with a potentially varied user base and workload,
+a more automated solution
+(e.g.\ a batch system plugin that can automatically prepare container images on job submission)
+is required.
+This both minimizes direct administrator burden and more closely approximates user experience on other resources like the WLCG.
+Our first attempt at such a system,
+described in the next sections,
+took the simplest possible approach to image.
+As we were developing this approach, however,
+a number of issues in real-world usage led us to conculde that a somewhat more sophisticated solution was required.
 
 \subsection{An initial approach}
 
 The simplest approach for automatically projecting container images is to create a suitable image on each batch job submission.
-Unfortunately, this solution is very wasteful of computing time.
-The average simulation or analysis job runs for XXX seconds,
-while preparing an image for it using Shrinkwrap and mksquashfs takes on average YYY seconds.
-This image creation is a serial step that must be completed before any actual processing occurs.
-In addition, freshly created images must be transferred and stored on any nodes that will use them,
-increasing load on the network and storage infrastructure.
+Unfortunately, this solution is very wasteful of computing time and storage space.
+Even a minimal image consisting of a precise set of required libraries and frameworks ranges in the tens to hundreds of gigabytes,
+depending on the applicaion.
+The full-repo images being tested at NERSC are multiple terabytes in size and take the majority of a day to create.
+In addition, image creation must be completed before any actual processing occurs,
+i.e.\ there is no way to start with a partial image that supports the first steps of a pipeline and finish building the image as the pipeline runs.
+There is also the cost of transferring and storing freshly created images on any nodes that will use them,
+further delaying job dispatch and increasing load on the network and storage infrastructure.
 
-The first step toward improving performance is to re-use previously created container images.
+The disk I/O alone required to create even a targeted image is likely to take more time than a single simulation or analysis job.
+Thus a simple performance improvement is to re-use previously created container images for multiple jobs.
 A single experiment submitting computational tasks is likely to request the same projection of CVMFS,
 at least for jobs submitted around the same time.
 It is straightforward to check for exact equality between projections as long as the system retains the set of files that went into their creation.
-In particular, it is important to retain both the paths and the hash of the file contents or some other unique identifier.
-This ensures that multiple versions of the same file are recognized as distinct entities.
+Note that it is important to retain both the paths and the hash of the file contents used in images.
+This ensures that multiple versions of the same file over time are recognized as distinct entities.
+If there are few CVMFS users at a site,
+this method could be sufficient.
 
-Next, worker nodes need to be able to cache previously used container images.
-Technologies like Docker currently operate this way (often to the chagrin of users and administrators doing scientific computing).
-Since projections of CVMFS can be re-created on demand,
-there is no need to carefully track which container images to keep.
-For our evaluation,
-we chose LRU as a simple caching policy.
+After creating a set of static images,
+the next step is to transfer them to local caches on the workers.
 Worker nodes are assumed to have some fixed amount of storage available for caching images.
-Node-local scratch storage is sufficient for temporarily caching these images.
-We also assumed that durable storage is available on the bridge machine for storing the data cache and projections associated with Shrinkwrap,
-as well as a cache of container images derived from these projections.
-Again, we chose LRU as a caching policy for our evaluation,
-though administrators would be free to experiment with different policies.
+If the size of the ``working set'' of images is smaller than the node-local storage,
+then each worker can keep a complete set of images.
+While ideal, this case is not necessarily realistic beyond a few images.
+With small/medium images in the tens-to-hundreds of gigabytes range,
+maintining a complete set of projected CVMFS images at each worker requires substantial resource provisioning.
+Thus it is important for workers be able to to cache only a subset of the available projected images.
+There are numerous caching policies and options available,
+but choice of worker cache strategy is not critically important for this application.
+Since projections and images of CVMFS can be re-created on demand,
+cache evictions might result in computation overhead but would not otherwise affect the functionality or correctness of the system.
+In the absence of a compelling and site-specific reason,
+a simple caching policy such as LRU would be sufficient.
+As we will see in section ??,
+LRU will also be an important piece of our final proposed approach.
 
 Under this design,
 on job submission the bridge machine first checks if the same projection had been requested before.
@@ -712,69 +814,134 @@ Once the bridge node places the newly created image in its cache,
 the process proceeds as in the previous case.
 The architecture of this initial approach is shown in figure ???.
 
-\subsection{Evaluation of the Initial Approach}
+%Node-local scratch storage is sufficient for temporarily caching these images.
+%We also assumed that durable storage is available on the bridge machine for storing the data cache and projections associated with Shrinkwrap,
+%as well as a cache of container images derived from these projections.
+%Again, we chose LRU as a caching policy for our evaluation,
+%though administrators would be free to experiment with different policies.
 
-We wanted to evaluate the viability of the simple design discussed in the previous section,
-so we analyzed of a stream of actual job submissions to the WLCG.
-Figure ?? gives a summary of the results.
-We observed that for a single experiment at a given point in time,
-the requested projection is fairly stable.
-However, updates to software sometimes overlapped with previous job submissions,
-leading to multiple projected versions of repos at the same time.
-In addition, submissions from different experiments generally request different versions of repos.
-Thus for a site servicing only a single LHC experiment and with ample storage for caching images,
-the simple approach outlined above is sufficient.
-For a more diverse workload like that of the WLCG,
-however, the amount of resources spent creating and storing projected images rapidly increases.
+%Technologies like Docker currently operate this way (often to the chagrin of users and administrators doing scientific computing).
 
-This presents a problem for sites attempting to significantly augment existing computational capacity,
-as they must be able to efficiently support jobs that vary widely both across experiment and time.
-Since NERSC was willing to devote QQ~TB of storage to complete copies of CVMFS for their current container images,
-the storage cost may be bearable.
-It is not safe to assume,
-however, that this will generally be the case.
-Thus we need to find a way to more efficiently handle and store images while still retaining the flexibility of fine-grained per-job customization.
+\subsection{Problems with the initial approach}
 
-It is important to note that while the cumulative size of the generated container images grows quickly,
-the projections themselves take up much less space.
-This is due to the deduplication feature of the Shrinkwrap tool.
-When creating a projection,
-Shrinkwrap fetches any missing file data and stores it in a common content-addressable cache directory.
-Shrinkwrap then hard links into the data cache to create the projection.
-This allows multiple projections with contents in common to share their underlying storage.
-Thus even with a large number of projections,
-as long as the differences between projections are small the storage space required is modest.
-When creating container images,
-however, this deduplication is broken as it is not possible to share components between disk images.
-When creating each image all data in the projection must be copied in.
-We observed that the overlap between images was in many cases quite large.
-We therefore investigated strategies for deduplication between static disk images,
-as this would greatly reduce the storage and transfer overhead observed here.
+In developing our initial approach,
+we found that a number of real-world usage patterns are poorly handled.
+A small change to a projection,
+such as adding a library or updating dependencies,
+results in the creation of a second, unrelated image.
+Even a small change such as removing an unnecessary documentation file results in a completely new container image.
+This is a manageable nuisance when manually testing or developing a system,
+but potentially results in problematic proliferation of images in a system managing images automatically and receiving updated specifications over time from tracing jobs.
+
+In addition to unnecessary duplication for a single user/application,
+there is also significant duplication across multiple users.
+In the simulation and analysis pipelines at CERN,
+a number of large components such as ROOT are used nearly universally.
+These components provide basic functionality and infrastructure that each experiment's software stack builds upon.
+Moreover, these same common infrastructure components must be included regardless of user or application.
+Thus even if every user of the system only creates a single container image,
+there is a duplicate copy of all such common infrastructure components for each user.
+This is problematic if we would like to design a system that can support many users at a site.
+
+These two sources of duplication tend to compound each other,
+leading us to conclude that a more sophisticated approach is necessary to work with realistically-provisioned workers and system infrastructure.
+These issues are fundamentally related to unnecessary duplication of data among container images.
+The same types of issues motivate the use of dynamic libraries for everyday applications.
+With statically linked executables,
+each application includes a complete set of required libraries.
+While very stable and reliable,
+OS distributions prefer to use dynamic linking.
+This allows applications to share a single copy of each library,
+so that foundational components such as libc are not copied into every executable,
+and so that updates and changes to the set of installed packages do not require rebuilding the entire system.
+For this approach to work,
+package maintainers must arrange all software packages in the system to ensure compatibility,
+and the OS distribution must set policies for system organization, update procedures, etc.
+Container images here function similarly to statically linked executables,
+but since multiple complete OS distributions are stored within CVMFS,
+and since we are dealing with multi-terabyte repos and entire frameworks and software stacks rather than individual OS libraries,
+the scale involved is of course larger.
+In the case of CVMFS, there is no notion of a ``package mainainer'' or central authority over all software.
+Each experiment manages its own software repo as it chooses,
+with some components and repos shared between multiple applications.
+Since we would like to be able to automatically handle existing applications that are not designed with central management in mind,
+we must instead look at other approaches for dealing with data duplication.
+
+\subsection{Deduplicating Container Images}
+
+The representation of projections as disk images is problematic for deduplicating data.
+Internally, Shrinkwrap uses hard links to a common data store so that a single file is only stored once across all projections in the system.
+On creating disk images, however,
+these links are broken.
+Each disk image must contain a complete copy of all data,
+so that a file must be included (and take up space) in every image that includes it.
+Docker's solution is to build container from layers of archives that can be reused.
+Docker layers are explicitly defined when writing a Dockerfile.
+With CVMFS, however, there is no existing layer-like organization or universal rule that could derive layers for existing applicaions.
+Working with layers defined from the outset is also a poor fit if we would like to support partial, gradually improved information from traces.
+We therefore desire some sort of deduplication that can be applied for existing applications to an assortment of container images after creation.
+
+To develop a deduplication strategy,
+we started with some observations about the projection and image properties.
+For ``large'' images,
+there is limited opportunity for deduplication.
+Each large image is a fairly complete copy of a particular repo.
+While there is bound to be some overlap between versions of the same repo,
+an updated image will contain a large number of updated software components,
+making a ``deduplicated'' between two versions significantly larger than either individually.
+There are also likely to be some conflicts in the filesystem if software components re-use the same paths for different files between versions.
+This case is akin to combining RHEL~6 and RHEL~7 in an attempt to save space.
+While there are similarities between the two,
+the significant changes and conflicts make this a poor strategy.
+Thus for our strategy we would like to avoid ``deduplicating'' images that have large non-overlapping portions.
+
+Likewise, there is little reason to attempt to deduplicate large images built from different repos.
+Such images would have little to no overlap,
+so the only benefit to combining the two would be reducing the number of images by one.
+This comes at the cost of needlessly storing and transferring the unused half.
+This case is akin to bundling a complete Debian installation alongside RHEL.
+Our deduplication strategy should only take effect for images with significant overlap.
+
+It is also undesirable to combine images of drastically different size.
+As an example, suppose a user creates a small projection as a subset of a repo for running a specific application.
+This small image overlaps completely with a large image of the whole repo,
+and there is likely no conflict.
+Automatically combining the large and small image, however,
+can have unintended consequences.
+Small, tailored images minimize transfer and storage overhead,
+and can be important for operating at scale.
+It is therefore unwise to surprise users by suddenly making their container images several orders of magnitude larger.
+This is akin to distributing a library exclusively by placing it within a disk image of a Debian installation.
+We would therefore like to attempt deduplication only for
+\begin{itemize}
+\item similarly-sized images.
+\item with large overlap.
+\item and with no conflicting paths.
+\end{itemize}
 
 \subsection{Quantifying Similarity between Projections}
 
-Because of the difficulties in applying normal data deduplication across multiple disk images,
-we developed an optimization strategy using additional knowledge about the behavior of CVMFS.
-To better understand the overlap and similarity between projections,
-we sought to quantify the degree to which two projections are related.
+Having set out the conditions under which to consider deduplicating projected images,
+we are in a position to define a metric to quantify the similarity between images.
 This would allow us to identify projections that are ``close'' (for some definition of close) as candidates for optimization.
-We chose the Jaccard distance for this metric because it has a number of useful properties.
-First, it is very simple to compute and operates on general sets.
+We chose the Jaccard distance under appropriate choice of set elements as it conveniently satisfies the desired qualities set out above,
+and is very well used and studied.
+In our case, we must describe a container image as consisting of a set of (path, content hash) tuples.
+CVMFS already stores files by the hashes of their contents,
+so this information is readily available.
+Considering both the file names and contents is important as CVMFS allows for updates to file contents over time.
+We chose fine-grained tracking of file contents rather than simply recording the version of the CVMFS repo to afford additional opportunities for dedupliaction.
+Since each update to a repo does not change the contets of every (or even the majority of) files,
+data from multiple repo versions may well be able to coexist in a single container image.
+
 For two sets $A$ and $B$,
 the Jaccard distance $d_j$ is defined as follows.
 \[
-d_j(A, B) = \frac{|A \cup B| - |A \cap B|}{|A \cup B|}
+d_j(A, B) = 1 - \frac{|A \cap B|}{|A \cup B|} = \frac{|A \cup B| - |A \cap B|}{|A \cup B|}
 \]
-Second, there exist approximations such as MinHash that can quickly estimate the Jaccard distance between two sets.
-Third, the Jaccard distance is a metric in the mathematical sense,
-making it easier to reason about distances.
+The Jaccard distance is a metric in the mathematical sense,
+making many intitive assumptions about distance and relationships between elements mathematically sound.
 For the purposes of comparisons,
-we represent a projection as a set of files in CVMFS.
-It is not sufficient to represent a file solely by its path,
-as different versions of a repo can have different data at the same path over time.
-Therefore we represent each file as a tuple consisting of (path, hash) where the path is the absolute path of the file and the hash is a unique, content based identifier.
-CVMFS already stores files by the hashes of their contents,
-so this information is readily available.
 
 For this application in particular,
 the Jaccard distance captures several desirable properties of projections.
@@ -783,9 +950,15 @@ the Jaccard distance will be small.
 Likewise for a par of projections with nothing in common,
 the distance will be high.
 And since the Jaccard distance is a proper metric,
-we can find clusters of related projections;
-If two projections are both found to be extremely close to a third projection,
+related projections will tend to occur in clusters;
+if two projections are both found to be extremely close to a third projection,
 we can conclude that the two are themselves close by the triangle inequality.
+Other choices of metric may well be viable,
+but we found the Jaccard distance to be both well-studied and amenable to efficient approximate impelementation.
+As described in section ??,
+we used MinHash~\cite{minhash} as a constant-time approximation of the Jaccard metric as a first pass at selecting similar images.
+Such an approximation is important in practice due to the sizes of the data involved;
+metadata listings alone (not including any file data) consumed multiple gigibytes of storage in some of the container images we evaluated.
 
 \subsection{Image Management as an Online Problem}
 
@@ -815,8 +988,8 @@ To decide if two projections are ``close'',
 we define the parameter $\alpha$ as the maximal Jaccard distance between closely related projections.
 Since Jaccard distance is by definition between zero and one,
 $\alpha$ must be in the same range.
-Choice of $\alpha$ is left to the system administrators.
-Very small choices of $\alpha$ require that projections be extremely close before considering them for merging.
+This $\alpha$ parameter is something like the ``globbiness'' of the system.
+Very small choices of $\alpha$ requires that projections be extremely close before considering them for merging.
 In the extreme case with $\alpha = 0$,
 only \emph{identical} images will be considered close so no images will be merged.
 This results in a larger number of independent images.
@@ -843,7 +1016,7 @@ This situation can arise in more subtle ways,
 for example with symlinks controlled by environment variables.
 Since projections of CVMFS must statically resolve such links,
 incompatibilities can arise despite paths appearing compatible under CVMFS.
-And candidate projections that are incompatible with the new request are removed from further consideration.
+Any candidate projections that are incompatible with the new request are removed from further consideration.
 
 If no compatible projections were found among the candidates,
 we create a container image for the projection as requested and add it to the cache.
@@ -862,141 +1035,269 @@ The container image for the augmented projection can replace the previous image,
 so that the net increase in storage space comes only from the newly added files.
 Since a single augmented image now serves two different batch job submissions,
 we avoid making two copies of the common files and data.
-In section ?? we explore the storage and computational costs of this approach in a more concrete setting.
+
+One potential issue with this merging strategy is that there is no way to prevent poor merging decisions.
+In the case of a one-off submission,
+the system might merge an existing, frequently used image.
+This is not problematic for the one-off job itself,
+but increases overhead for subsequent jobs.
+The original, frequently used image would increase in size with no additional benefit to other tasks.
+Images might become ``bloated'' in this way,
+accumulating infrequently used dependencies and increasing overhead indefinitely for future tasks.
+We can take advantage of LRU here to ensure that bad merges are eventually removed.
+Since limited storage is available for container images,
+our original approach removed infrequently used images by LRU when necessary.
+We thus define the age of an image to be the maximum of the ages of its constituent images.
+In the case of the frequently used container image merged with a one-off job,
+the one-off job would define the age of the container image since it is never used again.
+Despite having frequently used components,
+this image would be one of the first candidates for removal.
+Removing old images in this way therefore helps to limit the increased overhead of bad merging decisions.
+For a merged image to remain in cache indefinitely,
+its components would need to all be used regularly.
 
 \section{Evaluation}
 
-\begin{table}
-\centering
-% not factually accurate...
-\begin{tabular}{c c}
-CPU & Xeon something 2 \\
-Cores & 12 \\
-Memory & 24 GB \\
-Disk & 1 TB \\
-Image cache & 32 GB \\
-\end{tabular}
-\caption{Description of each of the 24 worker nodes}
-\label{tab:exp-setup}
-\end{table}
+To evaluate the viability of our approach in automatically deduplicating a container image store,
+we simulated the behavior of the system over time for a range of $\alpha$ values.
+Choice of $\alpha$ is important here to ensure that common components can be detected and merged in container images,
+and that old images or poor decisions are eventually removed from the system.
+Choosing $\alpha$ too far in either direction will result in excessive storage overhead due to duplicated components,
+or excessive compute and network overhead repeatedly merging largely unrelated images.
+Our goal in this evaluation is therefore to choose $\alpha$ so as to minimize the storage and compute costs associated with maintaining a collection of images.
 
-\begin{figure}
-\includegraphics[width=\linewidth]{plots/IMG_20181116_101513.jpg}
-\caption{Data and metadata costs with $\alpha=A$}
-\end{figure}
+\subsection{Simulating Job Submissions}
 
-\begin{figure}
-\includegraphics[width=\linewidth]{plots/IMG_20181116_101907.jpg}
-\caption{Data and metadata costs with $\alpha=B$}
-\end{figure}
+The first step in simulating system behavior over time was generating synthetic requests for images.
+We consulted with the developers of CVMFS,
+as well as HEP researchers at the University of Notre Dame collaborating with CERN.
+Since CVMFS is not currently widely deployed on HPC resources,
+the prospective user base for our container management system is limited.
+We were, however, informed of some researchers and groups experimenting with static mirrors of CVMFS for container images,
+including projects at NERSC and Stanford University,
+with one of the setups available publicly at \url{https://github.com/wyang007/atlas-fat-container}.
+Based on correspondence with researchers and existing applications running on the WLCG,
+we made some general observations about the behaviors and requirements of applications we need to support.
+First, there are some components such as ROOT that serve as common, foundational components to almost every other simulation and analysis stack.
+These core components are often stored separately from the rest of the software collections available in CVMFS.
+Second, there are shared components such as setup scripts, configuration files, and calibration or condition data (required to interpret readings from detectors) that are also nearly universally required but are more particular to a given experiment or group.
+Finally, there is the collection of software maintained by each experiment.
+Software collections may contain multiple copies of the same software for different architectures and versions.
+A single analysis job does not use the majority of the available software.
+There is some overlap among these categories of software,
+for example some software components are widely enough used to be considered core components,
+and usage and availability of components varies over time.
 
-\begin{figure}
-\includegraphics[width=\linewidth]{plots/IMG_20181116_102111.jpg}
-\caption{Data and metadata costs with $\alpha=C$}
-\end{figure}
+We use these observations about the structure and behavior of applications on CVMFS to a simplified simulation of dependency requirements for evaluating our container image management scheme.
+For the purpose of simulation,
+we assume that the requirements of a job are given as discrete components or collections of files.
+While Shrinkwrap can operate at the granularity of individual files,
+both static analysis and runtime tracing produce file collections to include.
+We are intentionally somewhat vague here to allow for both explicitly defined software components and tracing outputs.
+We examined the software collections available in the ATLAS repo and determined that the median size of a software component around 150~MB,
+which we used as the baseline for simulated components.
+This is a significant simplification,
+as CVMFS hosts some very large components and files.
+Looking at the distribution of file sizes we measured for the major repos (figures M-N),
+we observed that these extreme outlier files are fairly rare.
+Our next assumption is that certain components are included in most container images.
+While multiple versions and variations might exist,
+these components have a very high likelihood of appearing in every container image.
+These components correspond to the core components, setup scripts, calibration data, etc.\ described previously.
+For the purposes of simulation,
+we expect these components to be very widely duplicated in jobs across all users and experiments.
+Corresponding to the full software collections maintained by each experiment,
+we assume that there will be a larger set of components that is less uniformly included in images.
+Each user or group might have a set of tools that they use heavily,
+or jobs will request particular versions of libraries and components out of many avialable in the software collection.
 
-\begin{figure}
-\includegraphics[width=\linewidth]{plots/IMG_20181116_102506.jpg}
-\caption{Image size vs. requested projection size with $\alpha=A$}
-\end{figure}
+To simulate requests similar to these usage patterns,
+we first created two pools of components/packages: core and extra components.
+We surveyed the software collections available on CVMFS and chose pools of 200 core components and 3000 extra components to approximate the size and number of software components currently available on CVMFS.
+Of these core components,
+due to the availability of multiple versions and some duplication across experiments,
+we estimate that roughly half of these core components would be required to make a functional container image.
+Thus for the simulated requests,
+we included a random selection of 100 core components.
+This represents a fairly pathological case,
+as actual depencencies would show less random behavior and variation here.
+The simulation therefore tests near-worst case behavior.
+For the extra components,
+we surveyed available software collections,
+especially those of the ATLAS and CMS experiments,
+and chose a simulated pool size of 3000 extra components.
+For simulated image requests,
+we included a random selection of up to 10\% of the extra pool.
+This is again a worst case behavior,
+as actual requests would more ordered.
+We did not allow for the entire pool to be included as there is no compelling use case for this behavior.
+Even the multi-terabyte images being tested at NERSC are taken only from a single repo,
+the CMS repo.
+There is no analysis or simulation software that uses complete software stacks from multiple repos;
+each experiment maintains its own self-contained software collection.
+Thus aside from the core components that may be used in common across experiments,
+we do not expect to see images that require more than a fraction of the total available on CVMFS.
 
-\begin{figure}
-\includegraphics[width=\linewidth]{plots/IMG_20181116_102623.jpg}
-\caption{Image size vs. requested projection size with $\alpha=B$}
-\end{figure}
+\subsection{Quantifying Image Management Costs}
 
-\begin{figure}
-\includegraphics[width=\linewidth]{plots/IMG_20181116_102706.jpg}
-\caption{Image size vs. requested projection size with $\alpha=C$}
-\end{figure}
+The next step in evaluation is to define metrics describing the collection of cached containers.
+Here we will define metrics in terms of discrete software components/packages to match the simulated streams,
+but the same definitions would apply equally well at the granularity of individual files.
+We will suppose that there is a collection of requested container images,
+from either our simulated stream or from real user requests based on job analysis and/or dynamic tracing.
+It is the responsibility of the image management system to provide a container image satisfying the requirements of each request.
+Let the set $C$ be the union of all components in all requests.
+$C$ provides a lower bound on the amount of space required to serve all requests at the same time.
+If the storage space required to hold all of $C$ is greater than the total available storage,
+then new requests will requre removal of container image(s) for previous requests.
+Since we have been considering image management as an online problem,
+we cannot place an upper bound on the sizes of requests and thus require some caching policy
+(in our case LRU) to ensure that $C$ is finite and fits available storage.
+The large, full-repo images tested at NERSC correspond to single images containing all of $C$.
+The image size is very large and any changes/updates are expensive both in terms of compute and bandwidth.
+This approach does, however,
+avoid duplication of data as there is a single image that serves all users and applications.
+We next define the multiset $A$ as the union (with repetition) of all components in all requested images.
+If multiple images request the same component,
+it will occur multiple times in $A$.
+The size required to store $A$,
+including all duplicated elements,
+is the storage space that would be required if a separate image were created for each job request.
+$A$ captures the amount of (potentially) unnecessary duplication in the collection of images.
+The initial approach described in section ?? would have a storage cost of $A$.
+Note that it is always the case that $|C| \leq |A|$,
+and if $|C| = |A|$ then there are no common components among the requested container images.
+While large, full-repo images provide the best storage efficiency, being based solely on $|C|$,
+they are expensive and unweildy to use in practice.
+The initial approach in section ?? is extremely simple and friendly to use in practice,
+but its storage cost is determined by $A$.
+Our goal, therefore, in evaluating our improved image management scheme detailed in section ?? is to achieve storage cost as close to $C$ as possible without excessive overhead in terms of compute and network bandwidth to keep the image collection up to date.
+We will quantify this duplication ratio $d$ as $|A| / |C|$.
+For a system with no duplicated data in its container image(s),
+$d=1$.
+Larger values of $d$ indicate duplicated data.
 
-We implemented the pipeline described in section ?? on a cluster of RR machines at the Center for Research Computing~(CRC),
-a high-performance computing site at the University of Notre Dame.
-\Cref{tab:exp-setup} details the provisioned resources used in this test.
-We used the sequence of jobs from WLCG submission log discussed in section ?? as a realistic source of events for our evaluation.
-For each submission,
-we used the simplified pipeline from section ?? to build an image for running each job.
-We recorded the sizes of the image cache, projections, and data cache over the course of the workload.
-Figure ?? shows the data and metadata costs observed.
-We indeed observed rapid growth of the image cache with much slower increase in the underlying data cache.
-Figure ?? shows the amount of time spent preparing images versus the size of the requested projection.
-We see that preparation time is strongly correlated with the amount of data involved.
+\subsection{Effect of $\alpha$ Threshold}
 
-Next, we repeated this analysis using the projection pipeline described in section ?? and $\alpha = ??$.
-We chose these values to illustrate the effects of extreme values as well as one we consider to be a good choice.
-The results with $\alpha = W$ are very similar to those of the simplified pipeline.
-This is to be expected,
-since setting $\alpha$ to be very low limits the amount of merging performed.
-Setting $\alpha = 0$ would approximate the simplified pipeline,
-in that little to no merging occurs.
+Using these metrics for cost and overhead,
+we carried out an evaluation of our container image management scheme as follows.
+First, we somewhat arbitrarily chose a storage limit of 1~TB for our simulated image cache.
+This is not an unreasonable storage cost for an HPC site;
+for the test setup in place at NERSC,
+the full repo images already consume multiple terabytes per worker.
+We experimented with different storage limits around the same order of magnitude,
+but did not find marked differences in the behavioral trends observed below.
+The important aspect is that some definite limit exist.
+This does not take into account the storage used by Shrinkwrap,
+which is automatically deduplicated,
+nor does it take into account the metadata cost of creating projections.
 
-With $\alpha = X$,
-projections were merged very frequently.
-Figure ?? shows the steady increase in image size under this configuration.
-We see a corresponding increase in time spent constructing images in figure ??.
-With $\alpha$ set this high,
-the time spent searching for a compatible image becomes much more significant,
-hence the super-linear increase in build time.
-Approximate Jaccard distance is extremely fast to compute in memory via MinHash without interacting with the filesystem.
-As $\alpha$ is increased,
-there is less filtering from this fast approximation.
-Additional time is spent while Shrinkwrap walks the filesystem on a larger number of candidate images.
-For very homogeneous workloads,
-choice of $\alpha$ has less impact.
-In this case, however,
-different jobs are often incompatible with each other,
-so eagerly merging projections resulted in poorly chosen combinations that prevented better fits in the future.
-Thus we observe that the character of the workload is important in choosing $\alpha$.
+The next step was to generate a synthetic stream of requests for container images.
+These were generated using the procedure described previously.
+To ensure that both the merging strategy and the caching policy come into play,
+and to try to capture the steady state behavior of the system,
+we continued the stream until the total amount of unique data handled was twice the storage capacity.
+Equivalently, the request streams were long enough such that $C$ for the entire stream exceeded 2~TB.
+We then tabulated the duplication ratio $d$ for the image cache,
+as well as the total amount of data written over the course of the simulation.
+Our goal is to minimize both duplication and data written,
+which will be proportional to the compute and bandwidth cost of creating and updating container images.
+We repeated this simulation W times and computed the averages and standard deviations of these metrics.
+We repeated this procedure for a range of $\alpha$ thresholds in the range 0 to 1,
+with the results shown in figure ??.
 
-Figures ?? and ?? show the same space and time costs, respectively,
-as previously discussed for $\alpha = X$.
-Here we note a much less pronounced increase in image storage cost than figure ??.
-The increase in construction time is also less pronounced than in figure ??.
-We chose this value of $\alpha$ to be more selective than Y to avoid ballooning images but still allow more merging than Z.
-It is difficult to suggest values of $\alpha$ suitable for all cases since the machine configuration, workload, etc. all affect the patterns of behavior.
-Based on experience,
-we have found $\alpha$ values in the range V-W to be acceptable across a number of workloads and configurations.
+Looking at the results in figure ??,
+we can see that small values of $\alpha$ result in the highest level of data duplication,
+with $d$ decreasing as $\alpha$ increases.
+Since $\alpha=0$ corresponds to the initial approach of creating a unique container image for each job submission,
+we expect to see the highest level of duplication there.
+Looking at the cost in terms of write activity,
+we see that large values of $\alpha$ result in the most write I/O,
+and thus compute and bandwidth overhead.
+Since $\alpha=1$ allows all requests to be merged into a single large image,
+we expect minimal duplication.
+This configuration, however,
+has substantial overhead for image creation and maintenance.
+This is a real complaint from administrators at NERSC testing full-repo images.
+The high cost of creation means that such large images can only be infrequently created or updated.
 
-\begin{table}
-\centering
-\begin{tabular}{c|c c}
-& Cache Life (jobs) & Reuse count \\ \hline
-$\alpha=a$ & small & small? \\
-$\alpha=b$ & big & big \\
-$\alpha=c$ & small? & big \\
-\end{tabular}
-\caption{Median cache life and number of reuses for container images}
-\label{tab:cachelife}
-\end{table}
-
-We also measured the number of times a projection was reused or modified and how long images remained in the cache in an effort to estimate the reusability and relevance of images.
-\Cref{tab:cachelife} tabulates these results.
-With $\alpha = P$,
-images were not reused as often as with the other values.
-We suspect that this is because eager and frequent merges resulted in large images that were often incompatible with new jobs,
-and that drifted away such that they were no longer close enough to any projection to be used.
-The Jaccard distance metric penalizes elements in one set but not the other,
-so as more and more projections are merged,
-the resulting conglomerate moves farther and farther away from any single projection.
-Eventually, it will fall out of use and age out of the cache.
-
-In the other direction,
-the simplified pipeline and $\alpha = Q$ also had many short-lived images.
-This is likely because new images were often/always created for jobs,
-so there was little reuse.
-Due to the large number of images being created,
-images were pushed out of the cache very frequently.
-
-As part of the choice of $\alpha = Z$,
-we tried to maximize the amount of reuse and image lifetimes.
-This has the effect of indirectly minimizing storage and image construction time.
-These are also very easy metrics to track as part of batch submission.
-As such, they provide a simple way for administrators to optimize $\alpha$ to fit the system or workload.
-Some manual tuning of this form is likely necessary for applying this sort of projection pipeline in situations significantly different from our test setup.
 
 \section{Related Work}
 
 \section{Conclusion}
+
+\begin{figure}
+\includegraphics[width=\linewidth]{plots/file-hist/alice-ocdb.pdf}
+\caption{Distribution of file sizes in the \texttt{alice-ocdb.cern.ch} repo.
+The vertical line at $2^{20}$~B marks a file size of 1~MB.}
+\end{figure}
+
+\begin{figure}
+\includegraphics[width=\linewidth]{plots/file-hist/alice.pdf}
+\caption{Distribution of file sizes in the \texttt{alice.cern.ch} repo.
+The vertical line at $2^{20}$~B marks a file size of 1~MB.}
+\end{figure}
+
+\begin{figure}
+\includegraphics[width=\linewidth]{plots/file-hist/atlas-condb.pdf}
+\caption{Distribution of file sizes in the \texttt{atlas-condb.cern.ch} repo.
+The vertical line at $2^{20}$~B marks a file size of 1~MB.}
+\end{figure}
+
+\begin{figure}
+\includegraphics[width=\linewidth]{plots/file-hist/atlas.pdf}
+\caption{Distribution of file sizes in the \texttt{atlas.cern.ch} repo.
+The vertical line at $2^{20}$~B marks a file size of 1~MB.}
+\end{figure}
+
+\begin{figure}
+\includegraphics[width=\linewidth]{plots/file-hist/boss.pdf}
+\caption{Distribution of file sizes in the \texttt{boss.cern.ch} repo.
+The vertical line at $2^{20}$~B marks a file size of 1~MB.}
+\end{figure}
+
+\begin{figure}
+\includegraphics[width=\linewidth]{plots/file-hist/cms.pdf}
+\caption{Distribution of file sizes in the \texttt{cms.cern.ch} repo.
+The vertical line at $2^{20}$~B marks a file size of 1~MB.}
+\end{figure}
+
+\begin{figure}
+\includegraphics[width=\linewidth]{plots/file-hist/cvmfs-config.pdf}
+\caption{Distribution of file sizes in the \texttt{cvmfs-config.cern.ch} repo.
+The vertical line at $2^{20}$~B marks a file size of 1~MB.}
+\end{figure}
+
+\begin{figure}
+\includegraphics[width=\linewidth]{plots/file-hist/geant4.pdf}
+\caption{Distribution of file sizes in the \texttt{geant4.cern.ch} repo.
+The vertical line at $2^{20}$~B marks a file size of 1~MB.}
+\end{figure}
+
+\begin{figure}
+\includegraphics[width=\linewidth]{plots/file-hist/grid.pdf}
+\caption{Distribution of file sizes in the \texttt{grid.cern.ch} repo.
+The vertical line at $2^{20}$~B marks a file size of 1~MB.}
+\end{figure}
+
+\begin{figure}
+\includegraphics[width=\linewidth]{plots/file-hist/lhcb.pdf}
+\caption{Distribution of file sizes in the \texttt{lhcb.cern.ch} repo.
+The vertical line at $2^{20}$~B marks a file size of 1~MB.}
+\end{figure}
+
+\begin{figure}
+\includegraphics[width=\linewidth]{plots/file-hist/na61.pdf}
+\caption{Distribution of file sizes in the \texttt{na61.cern.ch} repo.
+The vertical line at $2^{20}$~B marks a file size of 1~MB.}
+\end{figure}
+
+\begin{figure}
+\includegraphics[width=\linewidth]{plots/file-hist/sft.pdf}
+\caption{Distribution of file sizes in the \texttt{sft.cern.ch} repo.
+The vertical line at $2^{20}$~B marks a file size of 1~MB.}
+\end{figure}
+
 
 \section{Reproducibility Data}
 
