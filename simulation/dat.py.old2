@@ -1,0 +1,46 @@
+#!/usr/bin/env python
+
+import sys
+import json
+
+import sim
+
+def sample(stream):
+    prev = None
+    prev_deletes = 0
+    for s in stream:
+        #FIXME
+        s['efficiency'] = float(s['reqsize']) / s['realsize']
+        if s['byteswritten'] > 10*sim.CAPACITY and s['deletes'] - prev_deletes > 0:
+            return prev
+        prev = s
+        prev_deletes = s['deletes']
+    sys.stderr.write('warning: no stopping point\n')
+
+def extract(samples, field):
+    values = [s[field] for s in samples]
+    values.sort()
+    return sim.median(values)
+
+def overhead(samples):
+    v = [s['realsize'] - s['reqsize'] for s in samples]
+    v.sort()
+    return sim.median(v)
+
+raw = json.load(sys.stdin)[sys.argv[1]]
+dat = dict()
+
+for k, v in raw.items():
+    samples = [sample(x) for x in v]
+    dat[float(k)] = [x for x in samples if x is not None]
+
+fields = dat.values()[0][0].keys()
+fields.sort()
+print(' '.join(['alpha', 'overhead'] + fields))
+
+alphas = dat.keys()
+alphas.sort()
+
+for i in alphas:
+    cols = [str(extract(dat[i], f)) for f in fields]
+    print(' '.join([str(i), str(overhead(dat[i]))] + cols))

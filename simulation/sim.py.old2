@@ -1,0 +1,205 @@
+#!/usr/bin/env python
+
+import sys
+import json
+import random
+import numbers
+import collections
+
+def median(lst):
+    # lst must already be sorted!
+    i = len(lst) // 2
+    if len(lst) % 2 == 0:
+        return (lst[i] + lst[i - 1]) / 2
+    else:
+        return lst[i]
+
+def jaccard(a, b):
+    return 1 - float(len(a & b))/len(a | b)
+
+def real_img(v):
+    return isinstance(v, numbers.Integral)
+
+def size(deps, img):
+    accum = 0
+    for pkg in img:
+        accum += median(deps[pkg]['size'])
+    return accum
+
+def closure(deps, pkg, res):
+    if pkg in res: return
+    res.add(pkg)
+    for p in deps[pkg]['deps']:
+        closure(deps, p, res)
+
+def blind(deps, img):
+    return set(random.sample(deps.keys(), len(img)))
+
+class Stream:
+    def __init__(self, deps, cap):
+        self.deps = deps
+        self.cap = cap
+    def __iter__(self):
+        return self
+    def next(self):
+        out = set()
+        count = random.randrange(1, self.cap)
+        for pkg in random.sample(self.deps.keys(), count):
+           closure(deps, pkg, out) 
+        return frozenset(out)
+
+class BlindStream:
+    def __init__(self, deps, cap):
+        self.deps = deps
+        self.stream = Stream(deps, cap)
+    def __iter__(self):
+        return self
+    def next(self):
+        return frozenset(blind(self.deps, self.stream.next()))
+
+class Cache:
+    def __init__(self, deps, capacity, alpha):
+        self.deps = deps
+        self.size = 0
+        self.capacity = capacity
+        self.alpha = alpha
+        self.writes = 0
+        self.bytes_written = 0
+        self.merges = 0
+        self.inserts = 0
+        self.deletes = 0
+        self.contents = collections.OrderedDict()
+
+    def unique(self):
+        return {item for subset in self.contents.keys() for item in subset}
+
+    def total(self):
+        return [item for (k, v) in self.contents.items() for item in k if real_img(v)]
+
+    def pkgs(self):
+        return len(self.total())
+
+    def unique_pkgs(self):
+        return len(self.unique())
+
+    def unique_size(self):
+        return sum([size(self.deps, [x]) for x in self.unique()])
+
+    def requests(self):
+        return self.contents.keys()
+
+    def images(self):
+        return [k for k, v in self.contents.items() if real_img(v)]
+
+    def image_sizes(self):
+        out = [v for k, v in self.contents.items() if real_img(v)]
+        out.sort()
+        return out
+
+    def stats(self):
+        return {
+            "writes": self.writes,
+            "byteswritten": self.bytes_written,
+            "pkgs": self.pkgs(),
+            "upkgs": self.unique_pkgs(),
+            "size": self.size,
+            "merges": self.merges,
+            "inserts": self.inserts,
+            "deletes": self.deletes,
+            "usize": self.unique_size(),
+            "requests": len(self.requests()),
+            "images": len(self.images()),
+            "imagesizes": median(self.image_sizes()),
+        }
+
+    def tidy(self, img=None):
+        if img is None:
+            for img in self.contents.keys():
+                self.tidy(img)
+            return
+        if not img in self.contents: return False
+        if real_img(self.contents[img]): return True
+        live = self.tidy(self.contents[img])
+        if not live: self.contents.pop(img)
+        return live
+
+    def merge(self, img):
+        best_img = None
+        best_dst = 2.0
+        for a in self.contents.keys():
+            if not real_img(self.contents[a]):
+                continue
+            j = jaccard(img, a)
+            if j <= self.alpha:
+                if j < best_dst:
+                    best_dst = j
+                    best_img = a
+        if best_img:
+            self.size -= self.contents.pop(best_img)
+            new_img = best_img | img
+            self.contents[best_img] = new_img
+            self.contents[new_img] = size(self.deps, new_img)
+            self.size += self.contents[new_img]
+            self.bytes_written += self.contents[new_img]
+            self.merges += 1
+            #print('merge@{} {}->{} to {}'.format(best_dst, id(best_img), id(new_img), len(new_img)))
+        else:
+            self.contents[img] = size(self.deps, img)
+            self.size += self.contents[img]
+            self.bytes_written += self.contents[img]
+            self.inserts += 1
+            #print('add {} of {}'.format(id(img), len(img)))
+        self.writes += 1
+
+    def shrink(self):
+        dead_img = None
+        dead_size = None
+        while self.size > self.capacity:
+            if self.bytes_written > 10*self.capacity: return True
+            if dead_img is None or dead_size is None:
+                (dead_img, dead_size) = self.contents.popitem(False)
+            if not real_img(dead_size):
+                dead_img = dead_size
+                dead_size = self.contents.pop(dead_img, None)
+                continue
+            #print('pop {} of {}'.format(id(dead_img), len(dead_img)))
+            self.deletes += 1
+            self.size -= dead_size
+            dead_img = None
+        return False
+
+    def eat(self, stream):
+        for img in stream:
+            self.merge(img)
+            if self.shrink(): return
+
+if __name__ == '__main__':
+    deps = json.load(sys.stdin)
+    for d in deps.values():
+        d['size'].sort()
+
+    out = {
+        "tree": {},
+        "blind": {},
+    }
+
+    for alpha in [x / 100.0 for x in range(0, 101)]:
+        sys.stderr.write('{} '.format(alpha))
+        if not alpha in out['tree']:
+            out['tree'][alpha] = []
+        if not alpha in out['blind']:
+            out['blind'][alpha] = []
+        for i in range(10):
+            c = Cache(deps, 2.5e11, alpha)
+            d = Cache(deps, 2.5e11, alpha)
+            c.eat(Stream(deps, 100))
+            d.eat(BlindStream(deps, 100))
+            c.tidy()
+            d.tidy()
+            out['tree'][alpha].append(c.stats())
+            out['blind'][alpha].append(d.stats())
+
+    json.dump(out, sys.stdout, indent=2)
+
+    #c = Cache(deps, 1e12, 0.6)
+    #c.eat(Stream(deps, 100))
