@@ -1,15 +1,18 @@
 #!/bin/bash
 
-CVMFS=pwd
+CVMFS=$(pwd)
 
 build_cvmfs () {
-  if [ $# -eq 1" ]
-    CVMFS=$1
+  if [ $# -eq 1 ]
+    then
+      CVMFS=$1
   fi
   cd $CVMFS
-  git clone https://github.com/cvmfs/cvmfs.git
-  cd cvmfs
-  mkdir build
+  if [ ! -d "cvmfs" ]
+    then
+      git clone https://github.com/cvmfs/cvmfs.git
+  fi
+  mkdir -p build
   cd build
   cmake -DBUILD_SHRINKWRAP=on ../cvmfs
   make
@@ -21,7 +24,7 @@ create_trace () {
 
 create_image () {
   local REPO=$1
-  cvmfs_shrinkwrap -r $REPO.cern.ch -f $REPO.cern.ch.config -t $REPO.cern.ch.spec --dest-base $2 -j $3
+  $CVMFS/build/cvmfs/cvmfs_shrinkwrap -r $REPO.cern.ch -f $REPO.cern.ch.config -t $REPO.cern.ch.spec --dest-base $2 -j $3
 }
 
 create_sqfs () {
@@ -61,7 +64,7 @@ create_config () {
     echo "CVMFS_HTTP_PROXY=DIRECT" >> $CONFIG
     echo "CVMFS_MOUNT_DIR=/cvmfs" >> $CONFIG
     echo "CVMFS_CACHE_BASE=$DIR/cache/cvmfs/shrinkwrap" >> $CONFIG
-    echo "CVMFS_SHARED_CACHE=no # Important as libcvmfs does not support shared caches" >> $CONFIG
+    echo "CVMFS_SHARED_CACHE=no" >> $CONFIG
     echo "CVMFS_USER=$USER" >> $CONFIG
     echo "CVMFS_DEBUGLOG=$DIR/cvmfs.log" >> $CONFIG
     echo "CVMFS_SYSLOG_LEVEL=LOG_DEBUG" >> $CONFIG
@@ -92,8 +95,8 @@ build_benchmark () {
 }
 
 run_benchmark () {
-    time cern-benchmark --benchmarks="kv;DB12;whetstone" -o
-    time cern-benchmark --benchmarks="kv;DB12;whetstone" -o --mp_num=1
+    time cern-benchmark --benchmarks="kv;DB12;whetstone" -o;
+    time cern-benchmark --benchmarks="kv;DB12;whetstone" -o --mp_num=1;
 }
 
 configure_root () {
@@ -104,4 +107,6 @@ run_root () {
     root -q -b TMVA_Higgs_Classification.C
 }
 
+build_cvmfs
 create_config sft $(pwd) $(pwd)/keys
+
