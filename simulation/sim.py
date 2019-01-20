@@ -33,9 +33,6 @@ def smedian(lst):
 def jaccard(a, b):
     return 1 - float(len(a & b))/len(a | b)
 
-def real_img(v):
-    return isinstance(v, numbers.Integral)
-
 def size(deps, img):
     accum = 0
     for pkg in img:
@@ -87,12 +84,21 @@ class Cache:
         self.log = []
         self.workers = {(): WORKERS}
         self.pool = {}
+        self.distances = {}
+
+    def lazy_jaccard(self, a, b):
+        if (a, b) in self.distances:
+            return self.distances[(a, b)]
+        out = jaccard(a, b)
+        self.distances[(a, b)] = out
+        self.distances[(b, a)] = out
+        return out
 
     def unique(self):
         return {item for subset in self.contents.keys() for item in subset}
 
     def total(self):
-        return [item for (k, v) in self.contents.items() for item in k if real_img(v)]
+        return [item for subset in self.contents.keys() for item in subset]
 
     def pkgs(self):
         return len(self.total())
@@ -101,18 +107,13 @@ class Cache:
         return len(self.unique())
 
     def unique_size(self):
-        return sum([size(self.deps, [x]) for x in self.unique()])
-
-    def requests(self):
-        return self.contents.keys()
+        return size(self.deps, self.unique())
 
     def images(self):
-        return [k for k, v in self.contents.items() if real_img(v)]
+        return self.contents.keys()
 
     def image_sizes(self):
-        out = [v for k, v in self.contents.items() if real_img(v)]
-        out.sort()
-        return out
+        return self.contents.values()
 
     def stats(self):
         return {
@@ -124,9 +125,8 @@ class Cache:
             "inserts": self.inserts,
             "deletes": self.deletes,
             "usize": self.unique_size(),
-            "requests": len(self.requests()),
             "images": len(self.images()),
-            "imagesizes": median(self.image_sizes()),
+            "imagesizes": smedian(self.image_sizes()),
             "activeimgs": len(self.workers),
             "pool": len(self.pool),
             "hits": self.hits,
@@ -146,22 +146,9 @@ class Cache:
         self.workers[img] = avail + transfers
         return transfers
 
-    def tidy(self, img=None):
-        if img is None:
-            for img in self.contents.keys():
-                self.tidy(img)
-            return
-        if not img in self.contents: return False
-        if real_img(self.contents[img]): return True
-        live = self.tidy(self.contents[img])
-        if not live: self.contents.pop(img)
-        return live
-
     def merge(self, existing, img):
         self.size -= self.contents.pop(existing)
         new_img = existing | img
-        self.contents[existing] = new_img
-        self.contents[img] = new_img
         self.contents[new_img] = size(self.deps, new_img)
         self.size += self.contents[new_img]
         self.bytes_written += self.contents[new_img]
@@ -175,41 +162,33 @@ class Cache:
         self.inserts += 1
         return self.contents[img], self.contents[img], img
 
-    def hit(self, img):
-        # for LRU
-        tmp = self.contents.pop(img)
-        self.contents[img] = tmp
-        if real_img(tmp):
+    def hit(self, real, img):
+        # LRU touch
+        tmp = self.contents.pop(real)
+        self.contents[real] = tmp
+
+        if real == img:
             req_size = tmp
-            real_size = tmp
         else:
             req_size = size(self.deps, img)
-            img = self.find_parent(img)
-            tmp = self.contents.pop(img)
-            self.contents[img] = tmp
-            real_size = tmp
 
         self.hits += 1
-        return req_size, real_size, img
+        return req_size, tmp, real
 
     def decide(self, img):
-        best_img = None
-        best_dst = 2.0
-
         if img in self.contents:
-            return self.hit(img)
+            return self.hit(img, img)
 
-        for a in self.contents.keys():
-            if not real_img(self.contents[a]):
-                continue
-            j = jaccard(img, a)
-            if j <= self.alpha:
-                if j < best_dst:
-                    best_dst = j
-                    best_img = a
+        candidates = [(self.lazy_jaccard(img, x), x) for x in self.contents.keys()]
+        candidates = [x for x in candidates if x[0] < self.alpha]
+        candidates.sort(key=lambda x: x[0])
 
-        if best_img is not None:
-            return self.merge(best_img, img)
+        for a in candidates:
+            if img.issubset(a[1]):
+                return self.hit(a[1], img)
+
+        if len(candidates) > 0:
+            return self.merge(candidates[0][1], img)
 
         return self.insert(img)
 
@@ -218,28 +197,16 @@ class Cache:
         self.log.append(self.stats())
         self.log[-1]["reqsize"] = req_size
         self.log[-1]["realsize"] = real_size
-        self.log[-1]["workers"] = random.randrange(1, WORKERS)
+        self.log[-1]["workers"] = random.randrange(1, WORKERS//2)
         self.log[-1]["tx"] = self.push_workers(new_img, self.log[-1]["workers"])
-
-    def find_parent(self, img):
-        if real_img(self.contents[img]):
-            return img
-        return self.find_parent(self.contents[img])
 
     def shrink(self):
         dead_img = None
         dead_size = None
         while self.size > CAPACITY:
-            if dead_img is None or dead_size is None:
-                (dead_img, dead_size) = self.contents.popitem(False)
-            if not real_img(dead_size):
-                dead_img = dead_size
-                dead_size = self.contents.pop(dead_img, None)
-                continue
-            #print('pop {} of {}'.format(id(dead_img), len(dead_img)))
+            dead_img, dead_size = self.contents.popitem(False)
             self.deletes += 1
             self.size -= dead_size
-            dead_img = None
 
     def run_from_pool(self):
         img = random.choice(self.pool.keys())
@@ -248,7 +215,6 @@ class Cache:
             self.pool.pop(img)
         self.eat(img)
         self.shrink()
-        self.tidy()
 
     def process(self, stream):
         for img in stream:
@@ -263,7 +229,7 @@ class Cache:
 def run(params):
     alpha, deps, deps_freq = params
     out = {}
-    for i in range(3):
+    for i in range(10):
         c = Cache(deps, alpha)
         d = Cache(deps, alpha)
         c.process(itertools.islice(Stream(deps, deps_freq), JOBS))
@@ -300,15 +266,14 @@ if __name__ == '__main__':
         out['tree'][alpha] = []
         out['blind'][alpha] = []
 
-    p = multiprocessing.Pool(8)
+    p = multiprocessing.Pool()
     results = p.map(run, [(i, deps, deps_freq) for i in alphas])
-    print('')
+    #results = map(run, [(i, deps, deps_freq) for i in alphas])
+    sys.stderr.write('\n')
+    sys.stderr.flush()
 
     for i in range(len(alphas)):
         out['tree'][alphas[i]].append(results[i]['tree'])
         out['blind'][alphas[i]].append(results[i]['blind'])
 
     json.dump(out, sys.stdout, indent=2)
-
-    #c = Cache(deps, 1e12, 0.6)
-    #c.eat(Stream(deps, 100))

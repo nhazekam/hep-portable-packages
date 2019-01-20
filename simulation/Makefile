@@ -17,7 +17,6 @@ all: \
         usize.plt.pdf \
         inserts.plt.pdf \
         converge.plt.pdf \
-        nanner.plt.pdf \
         deletes.plt.pdf \
         merges.plt.pdf \
         hits.plt.pdf \
@@ -26,7 +25,6 @@ all: \
         workers.plt.pdf \
         tx.plt.pdf \
         txcost.plt.pdf \
-        requests.plt.pdf \
         imagesizes.plt.pdf \
         efficiency.plt.pdf \
         overhead.plt.pdf \

@@ -6,7 +6,7 @@ import json
 import sim
 
 INST = ['overhead', 'efficiency', 'images', 'imagesizes', 'pkgs',
-        'realsize', 'reqsize', 'requests', 'size', 'upkgs', 'usize',
+        'realsize', 'reqsize', 'size', 'upkgs', 'usize',
         'txcost', 'pool', 'activeimgs', 'workers', 'tx']
 CUM = ['byteswritten', 'deletes', 'inserts', 'merges', 'hits']
 
