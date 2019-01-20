@@ -26,3 +26,5 @@ for i in range(PICKS):
     sizes[i].sort()
     counts[i].sort()
     print('{} {} {}'.format(i, sim.median(counts[i]), sim.median(sizes[i])))
+
+sys.stderr.write('\n')

@@ -8,10 +8,12 @@ import itertools
 import collections
 import multiprocessing
 
-CAPACITY = 1e12
+from numpy.random import choice
+
+CAPACITY = 2.5e11
 WORKERS = 1000
 MAXREQ = 100
-REUSE = 9
+REUSE = 5
 JOBS = 100
 
 def median(lst):
@@ -50,21 +52,22 @@ def blind(deps, img):
     return set(random.sample(deps.keys(), len(img)))
 
 class Stream:
-    def __init__(self, deps):
+    def __init__(self, deps, deps_freq):
         self.deps = deps
+        self.dep_freq = deps_freq
     def __iter__(self):
         return self
     def next(self):
         out = set()
         count = random.randrange(1, MAXREQ)
-        for pkg in random.sample(self.deps.keys(), count):
+        for pkg in choice(self.deps.keys(), count, False, self.dep_freq):
            closure(deps, pkg, out) 
         return frozenset(out)
 
 class BlindStream:
-    def __init__(self, deps):
+    def __init__(self, deps, deps_freq):
         self.deps = deps
-        self.stream = Stream(deps)
+        self.stream = Stream(deps, deps_freq)
     def __iter__(self):
         return self
     def next(self):
@@ -258,13 +261,13 @@ class Cache:
         return self.log
 
 def run(params):
-    alpha, deps = params
+    alpha, deps, deps_freq = params
     out = {}
     for i in range(3):
         c = Cache(deps, alpha)
         d = Cache(deps, alpha)
-        c.process(itertools.islice(Stream(deps), JOBS))
-        d.process(itertools.islice(BlindStream(deps), JOBS))
+        c.process(itertools.islice(Stream(deps, deps_freq), JOBS))
+        d.process(itertools.islice(BlindStream(deps, deps_freq), JOBS))
         out['tree'] = c.log
         out['blind'] = d.log
     sys.stderr.write('{} '.format(alpha))
@@ -276,19 +279,29 @@ if __name__ == '__main__':
     for d in deps.values():
         d['size'].sort()
 
+    deps_freq = []
+    total = 0.0
+    usage = open("sft.usage.json", 'r')
+    freq = json.load(usage)
+    for d in deps.keys():
+	total += freq.get(d, 1.0)
+        deps_freq.append(freq.get(d, 1))
+
+    deps_freq[:] = [x / total for x in deps_freq]
+
     out = {
         "tree": {},
         "blind": {},
     }
 
-    alphas = [x / 100.0 for x in range(40, 101)]
+    alphas = [x / 100.0 for x in range(40, 101, 10)]
 
     for alpha in alphas:
         out['tree'][alpha] = []
         out['blind'][alpha] = []
 
-    p = multiprocessing.Pool(61)
-    results = p.map(run, [(i, deps) for i in alphas])
+    p = multiprocessing.Pool(8)
+    results = p.map(run, [(i, deps, deps_freq) for i in alphas])
     print('')
 
     for i in range(len(alphas)):

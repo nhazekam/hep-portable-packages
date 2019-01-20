@@ -40,13 +40,21 @@ sft.lst.txt:
 %.buildinfo.json: %.lst.txt
 	./read_buildinfo.py < $< > $@
 
+%.usage.txt: %.usage.tar.gz
+	tar -xzf $<
+	find $*.usage/ -type f  > $@ || true
+	find $*.usage/ -type f | wc -l
+
+%.usage.json: %.usage.txt
+	./read_usage.py < $< > $@
+
 %.recent.json: %.buildinfo.json
 	./recent.py < $< > $@
 
 %.deps.json: %.buildinfo.json %.du.txt
 	./deps.py $^ > $@
 
-%.sim.json: %.deps.json
+%.sim.json: %.deps.json %.usage.json
 	./sim.py < $< > $@
 
 %.du.txt: %.lst.txt
@@ -70,9 +78,21 @@ sft.lst.txt:
 %.dist.pdf: dist.plt %.dist.dat
 	gnuplot -c $^ $@
 
+.PHONY: reload
+reload:
+	git checkout -- sft.lst.txt
+	git checkout -- sft.du.txt
+	git checkout -- sft.buildinfo.json
+
+
+
 .PHONY: clean
 clean:
-	rm -rf *.pdf
+	rm -rf *.pdf *.usage
+
+.PHONY: qlean
+qlean: clean
+	find . -type f -empty -delete
 
 .PHONY: nuke
 nuke: clean
