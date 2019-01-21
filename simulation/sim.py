@@ -11,7 +11,6 @@ import multiprocessing
 from numpy.random import choice
 
 CAPACITY = 1e12
-WORKERS = 1000
 MAXREQ = 100
 REUSE = 9
 JOBS = 100
@@ -93,21 +92,24 @@ class Cache:
         self.inserts = 0
         self.deletes = 0
         self.hits = 0
-        self.tx = 0
-        self.tx_cost = 0
         self.contents = collections.OrderedDict()
         self.log = []
-        self.workers = collections.OrderedDict()
-        self.workers[()] = WORKERS
-        self.pool = {}
         self.distances = {}
+        self.subsets = {}
 
-    def lazy_jaccard(self, a, b):
+    def jaccard(self, a, b):
         if (a, b) in self.distances:
             return self.distances[(a, b)]
         out = jaccard(a, b)
         self.distances[(a, b)] = out
         self.distances[(b, a)] = out
+        return out
+
+    def issubset(self, a, b):
+        if (a, b) in self.subsets:
+            return self.subsets[(a, b)]
+        out = a.issubset(b)
+        self.subsets[(a, b)] = out
         return out
 
     def unique(self):
@@ -143,27 +145,8 @@ class Cache:
             "usize": self.unique_size(),
             "images": len(self.images()),
             "imagesizes": smedian(self.image_sizes()),
-            "activeimgs": len(self.workers),
-            "pool": len(self.pool),
             "hits": self.hits,
-            "tx": self.tx,
-            "txcost": self.tx_cost,
         }
-
-    def push_workers(self, img, count):
-        transfers = 0
-        avail = self.workers.pop(img, 0)
-        count -= avail
-        while count > 0:
-            other = self.workers.keys()[0]
-            tx = min(count, self.workers[other])
-            self.workers[other] -= tx
-            count -= tx
-            transfers += tx
-            if self.workers[other] <= 0:
-                self.workers.pop(other)
-        self.workers[img] = avail + transfers
-        return transfers
 
     def merge(self, existing, img):
         self.size -= self.contents.pop(existing)
@@ -198,22 +181,12 @@ class Cache:
         if img in self.contents:
             return self.hit(img, img)
 
-        # for worker simulation
-        # prioritize stuff already on workers
-        pushed = [(self.lazy_jaccard(img, x), x) for x in self.workers.keys() if x in self.contents]
-        pushed = [x for x in pushed if x[0] < self.alpha]
-        pushed.sort(key=lambda x: x[0])
-
-        for a in pushed:
-            if img.issubset(a[1]):
-                return self.hit(a[1], img)
-
-        candidates = [(self.lazy_jaccard(img, x), x) for x in self.contents.keys()]
+        candidates = [(self.jaccard(img, x), x) for x in self.contents.keys()]
         candidates = [x for x in candidates if x[0] < self.alpha]
         candidates.sort(key=lambda x: x[0])
 
         for a in candidates:
-            if img.issubset(a[1]):
+            if self.issubset(img, a[1]):
                 return self.hit(a[1], img)
 
         if len(candidates) > 0:
@@ -226,10 +199,6 @@ class Cache:
         self.log.append(self.stats())
         self.log[-1]["reqsize"] = req_size
         self.log[-1]["realsize"] = real_size
-        self.log[-1]["workers"] = random.randrange(1, WORKERS//4)
-        transfers = self.push_workers(new_img, self.log[-1]["workers"])
-        self.tx += transfers
-        self.tx_cost += transfers * real_size
 
     def shrink(self):
         dead_img = None
@@ -239,22 +208,15 @@ class Cache:
             self.deletes += 1
             self.size -= dead_size
 
-    def run_from_pool(self):
-        img = random.choice(self.pool.keys())
-        self.pool[img] -= 1
-        if self.pool[img] < 0:
-            self.pool.pop(img)
-        self.eat(img)
-        self.shrink()
-
     def process(self, stream):
+        pool = []
         for img in stream:
-            while len(self.pool) > 0:
-                if REUSE > 0 and random.random() < 1.0/(2*REUSE): break
-                self.run_from_pool()
-            self.pool[img] = REUSE
-        while len(self.pool) > 0:
-            self.run_from_pool()
+            for i in range(REUSE):
+                pool.append(img)
+        random.shuffle(pool)
+        for img in pool:
+            self.eat(img)
+            self.shrink()
         return self.log
 
 def run(params):
