@@ -11,7 +11,6 @@ import argparse
 
 from numpy.random import choice
 
-CAPACITY = 1.5e12
 MAXREQ = 100
 
 def median(lst):
@@ -82,8 +81,9 @@ class BlindStream:
         return frozenset(blind(self.deps, self.stream.next()))
 
 class Cache:
-    def __init__(self, deps, alpha, reuse):
+    def __init__(self, deps, alpha, reuse, capacity):
         self.reuse = reuse
+        self.capacity = capacity
         self.deps = deps
         self.size = 0
         self.alpha = alpha
@@ -203,7 +203,7 @@ class Cache:
     def shrink(self):
         dead_img = None
         dead_size = None
-        while self.size > CAPACITY:
+        while self.size > self.capacity:
             dead_img, dead_size = self.contents.popitem(False)
             self.deletes += 1
             self.size -= dead_size
@@ -220,18 +220,18 @@ class Cache:
         return self.log
 
 def run(params):
-    alpha, deps, deps_freq, reuse, jobs = params
+    alpha, deps, deps_freq, reuse, jobs, capacity = params
     out = {}
     for i in range(10):
-        b = Cache(deps, alpha, reuse)
-        c = Cache(deps, alpha, reuse)
-        d = Cache(deps, alpha, reuse)
+        b = Cache(deps, alpha, reuse, capacity)
+        #c = Cache(deps, alpha, reuse, capacity)
+        #d = Cache(deps, alpha, reuse, capacity)
         b.process(itertools.islice(DistStream(deps, deps_freq), jobs))
-        c.process(itertools.islice(Stream(deps), jobs))
-        d.process(itertools.islice(BlindStream(deps), jobs))
+        #c.process(itertools.islice(Stream(deps), jobs))
+        #d.process(itertools.islice(BlindStream(deps), jobs))
         out['dist'] = b.log
-        out['tree'] = c.log
-        out['blind'] = d.log
+        #out['tree'] = c.log
+        #out['blind'] = d.log
     sys.stderr.write('{} '.format(alpha))
     return out
     
@@ -240,6 +240,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--reuse', type=int)
     parser.add_argument('--jobs', type=int)
+    parser.add_argument('--cache', type=float)
     args = parser.parse_args()
 
     deps = json.load(sys.stdin)
@@ -270,8 +271,8 @@ if __name__ == '__main__':
         out['dist'][alpha] = []
 
     p = multiprocessing.Pool()
-    results = p.map(run, [(i, deps, deps_freq, args.reuse, args.jobs) for i in alphas])
-    #results = map(run, [(i, deps, deps_freq) for i in alphas])
+    results = p.map(run, [(i, deps, deps_freq, args.reuse, args.jobs, args.cache) for i in alphas])
+    #results = map(run, [(i, deps, deps_freq, args.reuse, args.jobs, args.cache) for i in alphas])
     sys.stderr.write('\n')
     sys.stderr.flush()
 
