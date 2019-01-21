@@ -277,8 +277,8 @@ if __name__ == '__main__':
     sys.stderr.flush()
 
     for i in range(len(alphas)):
-        out['tree'][alphas[i]].append(results[i]['tree'])
-        out['blind'][alphas[i]].append(results[i]['blind'])
+        #out['tree'][alphas[i]].append(results[i]['tree'])
+        #out['blind'][alphas[i]].append(results[i]['blind'])
         out['dist'][alphas[i]].append(results[i]['dist'])
 
     json.dump(out, sys.stdout, indent=2)
