@@ -48,7 +48,7 @@ def closure(deps, pkg, res):
 def blind(deps, img):
     return set(random.sample(deps.keys(), len(img)))
 
-class Stream:
+class DistStream:
     def __init__(self, deps, deps_freq):
         self.deps = deps
         self.dep_freq = deps_freq
@@ -61,10 +61,23 @@ class Stream:
            closure(deps, pkg, out) 
         return frozenset(out)
 
-class BlindStream:
-    def __init__(self, deps, deps_freq):
+
+class Stream:
+    def __init__(self, deps):
         self.deps = deps
-        self.stream = Stream(deps, deps_freq)
+    def __iter__(self):
+        return self
+    def next(self):
+        out = set()
+        count = random.randrange(1, MAXREQ)
+        for pkg in random.sample(self.deps.keys(), count):
+           closure(deps, pkg, out) 
+        return frozenset(out)
+
+class BlindStream:
+    def __init__(self, deps):
+        self.deps = deps
+        self.stream = Stream(deps)
     def __iter__(self):
         return self
     def next(self):
@@ -248,10 +261,13 @@ def run(params):
     alpha, deps, deps_freq = params
     out = {}
     for i in range(10):
+        b = Cache(deps, alpha)
         c = Cache(deps, alpha)
         d = Cache(deps, alpha)
-        c.process(itertools.islice(Stream(deps, deps_freq), JOBS))
-        d.process(itertools.islice(BlindStream(deps, deps_freq), JOBS))
+        b.process(itertools.islice(DistStream(deps, deps_freq), JOBS))
+        c.process(itertools.islice(Stream(deps), JOBS))
+        d.process(itertools.islice(BlindStream(deps), JOBS))
+        out['dist'] = b.log
         out['tree'] = c.log
         out['blind'] = d.log
     sys.stderr.write('{} '.format(alpha))
