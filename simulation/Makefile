@@ -8,6 +8,7 @@ all: \
         sft.dist.dat \
         sft.sim.json \
         sft.tree.dat \
+        sft.lxplus.dat \
         sft.blind.dat \
         byteswritten.plt.pdf \
         images.plt.pdf \
@@ -20,15 +21,15 @@ all: \
         deletes.plt.pdf \
         merges.plt.pdf \
         hits.plt.pdf \
-        pool.plt.pdf \
-        activeimgs.plt.pdf \
-        workers.plt.pdf \
-        tx.plt.pdf \
-        txcost.plt.pdf \
         imagesizes.plt.pdf \
-        efficiency.plt.pdf \
+        cont_eff.plt.pdf \
+        cache_eff.plt.pdf \
+        nanner.plt.pdf \
+        nanner2.plt.pdf \
+        nanner3.plt.pdf \
         overhead.plt.pdf \
         ops-tree.plt.pdf \
+        peaksize.plt.pdf \
         sft.dist.pdf \
 	sft.dot
 
@@ -61,6 +62,9 @@ sft.lst.txt:
 %.dist.dat: %.deps.json
 	./picks.py < $< > $@
 
+%.lxplus.dat: %.sim.json
+	./dat.py dist < $< > $@
+
 %.tree.dat: %.sim.json
 	./dat.py tree < $< > $@
 
@@ -70,8 +74,8 @@ sft.lst.txt:
 %.dot: %.deps.json %.recent.json
 	./graph.py $^ > $@
 
-%.plt.pdf: %.plt sft.tree.dat sft.blind.dat common.plt
-	gnuplot -c $< $@ sft.tree.dat sft.blind.dat
+%.plt.pdf: %.plt sft.tree.dat sft.blind.dat sft.lxplus.dat common.plt
+	gnuplot -c $< $@ sft.tree.dat sft.blind.dat sft.lxplus.dat
 
 %.dist.pdf: dist.plt %.dist.dat
 	gnuplot -c $^ $@

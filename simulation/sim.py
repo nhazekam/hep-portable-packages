@@ -7,13 +7,12 @@ import numbers
 import itertools
 import collections
 import multiprocessing
+import argparse
 
 from numpy.random import choice
 
-CAPACITY = 1e12
+CAPACITY = 1.5e12
 MAXREQ = 100
-REUSE = 9
-JOBS = 100
 
 def median(lst):
     # lst must already be sorted!
@@ -83,7 +82,8 @@ class BlindStream:
         return frozenset(blind(self.deps, self.stream.next()))
 
 class Cache:
-    def __init__(self, deps, alpha):
+    def __init__(self, deps, alpha, reuse):
+        self.reuse = reuse
         self.deps = deps
         self.size = 0
         self.alpha = alpha
@@ -211,7 +211,7 @@ class Cache:
     def process(self, stream):
         pool = []
         for img in stream:
-            for i in range(REUSE):
+            for i in range(self.reuse):
                 pool.append(img)
         random.shuffle(pool)
         for img in pool:
@@ -220,15 +220,15 @@ class Cache:
         return self.log
 
 def run(params):
-    alpha, deps, deps_freq = params
+    alpha, deps, deps_freq, reuse, jobs = params
     out = {}
     for i in range(10):
-        b = Cache(deps, alpha)
-        c = Cache(deps, alpha)
-        d = Cache(deps, alpha)
-        b.process(itertools.islice(DistStream(deps, deps_freq), JOBS))
-        c.process(itertools.islice(Stream(deps), JOBS))
-        d.process(itertools.islice(BlindStream(deps), JOBS))
+        b = Cache(deps, alpha, reuse)
+        c = Cache(deps, alpha, reuse)
+        d = Cache(deps, alpha, reuse)
+        b.process(itertools.islice(DistStream(deps, deps_freq), jobs))
+        c.process(itertools.islice(Stream(deps), jobs))
+        d.process(itertools.islice(BlindStream(deps), jobs))
         out['dist'] = b.log
         out['tree'] = c.log
         out['blind'] = d.log
@@ -237,6 +237,11 @@ def run(params):
     
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--reuse', type=int)
+    parser.add_argument('--jobs', type=int)
+    args = parser.parse_args()
+
     deps = json.load(sys.stdin)
     for d in deps.values():
         d['size'].sort()
@@ -254,6 +259,7 @@ if __name__ == '__main__':
     out = {
         "tree": {},
         "blind": {},
+        "dist": {},
     }
 
     alphas = [x / 100.0 for x in range(40, 101)]
@@ -261,9 +267,10 @@ if __name__ == '__main__':
     for alpha in alphas:
         out['tree'][alpha] = []
         out['blind'][alpha] = []
+        out['dist'][alpha] = []
 
     p = multiprocessing.Pool()
-    results = p.map(run, [(i, deps, deps_freq) for i in alphas])
+    results = p.map(run, [(i, deps, deps_freq, args.reuse, args.jobs) for i in alphas])
     #results = map(run, [(i, deps, deps_freq) for i in alphas])
     sys.stderr.write('\n')
     sys.stderr.flush()
@@ -271,5 +278,6 @@ if __name__ == '__main__':
     for i in range(len(alphas)):
         out['tree'][alphas[i]].append(results[i]['tree'])
         out['blind'][alphas[i]].append(results[i]['blind'])
+        out['dist'][alphas[i]].append(results[i]['dist'])
 
     json.dump(out, sys.stdout, indent=2)
