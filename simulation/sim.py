@@ -10,10 +10,10 @@ import multiprocessing
 
 from numpy.random import choice
 
-CAPACITY = 2.5e11
+CAPACITY = 1e12
 WORKERS = 1000
 MAXREQ = 100
-REUSE = 5
+REUSE = 9
 JOBS = 100
 
 def median(lst):
@@ -80,9 +80,12 @@ class Cache:
         self.inserts = 0
         self.deletes = 0
         self.hits = 0
+        self.tx = 0
+        self.tx_cost = 0
         self.contents = collections.OrderedDict()
         self.log = []
-        self.workers = {(): WORKERS}
+        self.workers = collections.OrderedDict()
+        self.workers[()] = WORKERS
         self.pool = {}
         self.distances = {}
 
@@ -130,6 +133,8 @@ class Cache:
             "activeimgs": len(self.workers),
             "pool": len(self.pool),
             "hits": self.hits,
+            "tx": self.tx,
+            "txcost": self.tx_cost,
         }
 
     def push_workers(self, img, count):
@@ -137,10 +142,11 @@ class Cache:
         avail = self.workers.pop(img, 0)
         count -= avail
         while count > 0:
-            other = random.choice(self.workers.keys())
-            self.workers[other] -= 1
-            count -= 1
-            transfers += 1
+            other = self.workers.keys()[0]
+            tx = min(count, self.workers[other])
+            self.workers[other] -= tx
+            count -= tx
+            transfers += tx
             if self.workers[other] <= 0:
                 self.workers.pop(other)
         self.workers[img] = avail + transfers
@@ -179,6 +185,16 @@ class Cache:
         if img in self.contents:
             return self.hit(img, img)
 
+        # for worker simulation
+        # prioritize stuff already on workers
+        pushed = [(self.lazy_jaccard(img, x), x) for x in self.workers.keys() if x in self.contents]
+        pushed = [x for x in pushed if x[0] < self.alpha]
+        pushed.sort(key=lambda x: x[0])
+
+        for a in pushed:
+            if img.issubset(a[1]):
+                return self.hit(a[1], img)
+
         candidates = [(self.lazy_jaccard(img, x), x) for x in self.contents.keys()]
         candidates = [x for x in candidates if x[0] < self.alpha]
         candidates.sort(key=lambda x: x[0])
@@ -197,8 +213,10 @@ class Cache:
         self.log.append(self.stats())
         self.log[-1]["reqsize"] = req_size
         self.log[-1]["realsize"] = real_size
-        self.log[-1]["workers"] = random.randrange(1, WORKERS//2)
-        self.log[-1]["tx"] = self.push_workers(new_img, self.log[-1]["workers"])
+        self.log[-1]["workers"] = random.randrange(1, WORKERS//4)
+        transfers = self.push_workers(new_img, self.log[-1]["workers"])
+        self.tx += transfers
+        self.tx_cost += transfers * real_size
 
     def shrink(self):
         dead_img = None
@@ -219,7 +237,7 @@ class Cache:
     def process(self, stream):
         for img in stream:
             while len(self.pool) > 0:
-                if REUSE > 0 and random.random() < 1.0/(REUSE+2): break
+                if REUSE > 0 and random.random() < 1.0/(2*REUSE): break
                 self.run_from_pool()
             self.pool[img] = REUSE
         while len(self.pool) > 0:
@@ -250,7 +268,7 @@ if __name__ == '__main__':
     usage = open("sft.usage.json", 'r')
     freq = json.load(usage)
     for d in deps.keys():
-	total += freq.get(d, 1.0)
+        total += freq.get(d, 1.0)
         deps_freq.append(freq.get(d, 1))
 
     deps_freq[:] = [x / total for x in deps_freq]
@@ -260,7 +278,7 @@ if __name__ == '__main__':
         "blind": {},
     }
 
-    alphas = [x / 100.0 for x in range(40, 101, 10)]
+    alphas = [x / 100.0 for x in range(40, 101)]
 
     for alpha in alphas:
         out['tree'][alpha] = []
