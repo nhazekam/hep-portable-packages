@@ -203,7 +203,7 @@ and may not be designed with tasks such as converting between image and containe
 In the case of the simulation and analysis workloads at CERN,
 unrestricted network access and FUSE support are critical for providing global filesystem access.
 Nearly all research software used at CERN assumes the availability of the CernVM File System (CVMFS),
-a distributed global filesystem built for distributing software and configuration data.
+a global filesystem built for distributing software and configuration data.
 CMVFS provides a read-only, distributed file system using HTTP for network transport and extensive local
 caching to rapidly distribute updates in software across the WLCG.
 Dependence on CVMFS to distribute experiment software currently makes it impossible to take advantage of many HPC sites.
@@ -283,17 +283,20 @@ This is not an issue for the WLCG sites,
 as they provide dedicated computing resources and can customize their setups to meet the requirements of CVMFS.
 For a professor attempting to harness a campus cluster,
 on the other hand, these requirements present a serious barrier.
+Solutions exist such as
 Parrot, a debugging tool and personal filesystem developed at the University of Notre Dame,
-can be used in cases where privilege on the worker nodes is limited and FUSE is not available but still requires unrestricted network access.
-For computing at scale, it is important to provide a caching proxy as well,
-which is likely to require assistance from administrators.
+which sidesteps FUSE but still requires unrestricted network access and
+UnCVMFS which locally store all of CVMFS to avoid network access, 
+but relies on large storage and permission mounting.
+For computing at scale, it is important to provide a caching proxy and concise storage,
+which currently require assistance from administrators.
 
 \subsection{HPC}
 
 With the rapidly increasing demands of the LHC experiments at CERN,
 HPC resources are an appealing source of computing power to supplement the WLCG.
-Leadership class machines such as Summit (?) will by themselves be able to perform a substantial portion of the work of the entire WLCG today.
-Use of national-scale HPC resources across the United States and Europe such as XXX, YYY, Piz Daint at the Swiss CSCS HPC center could be key in meeting the computational demands following the LHC's high-luminosity upgrade.
+Leadership class machines such as Summit, at Oak Ridge National Laboratory, will by themselves be able to perform a substantial portion of the work of the entire WLCG today.
+Use of national-scale HPC resources across the United States and Europe such as Cori at NERSC, Sierra at Lawrence Livermore National Laboratory, Piz Diant at Swiss National Supercomputing Centre could be key in meeting the computational demands following the LHC's high-luminosity upgrade.
 
 Unfortunately, HPC sites are generally more restrictive than the previously mentioned campus resources.
 In addition to limited privilege on workers and lack of FUSE support,
@@ -328,6 +331,7 @@ CVMFS as a whole does not map well to the semantics of a traditional filesystem.
 Projecting CVMFS into such a filesystem can capture at most a single, static version of a repo and must necessarily eliminate some features,
 such as environment-based symlink resolution at runtime.
 
+\if 0
 % https://indico.cern.ch/event/587955/contributions/2937411/attachments/1683156/2705423/WahidBhimji-CHEP18-NERSC.pdf
 Another similar approach in use at NERSC is DVMFS.
 Since creating static container images containing CVMFS is costly and difficult to customize,
@@ -340,6 +344,7 @@ While this approach affords more flexibility in choice of repos and software ver
 it increases the job startup time and places additional requirements on the infrastructure.
 To be usable in production, DVMFS requires a sufficient number of DVS servers to be provisioned.
 DVMFS is nonetheless a viable solution as long as the costs of developing/maintaining the service and allocating infrastructure do not grow too high.
+\fi
 
 \section{Defining Application Dependencies}
 
@@ -379,6 +384,8 @@ However, this quickly becomes unfeasible with
 even a moderate number of requirements.
 This leaves the need for an automate method to create
 specifications.
+
+\subsubsection{Tracing}
 The first method is to create a sample trace for your
 jobs. 
 Creating a trace from a sample job allows 
@@ -393,10 +400,45 @@ dependant on the method used,
 which could be an LD\_PRELOAD library,
 using Parrot to track used files, % I think parrot was mentioned previously
 or building the tracing in to the application.
-As we will see later, we chose application
-level tracing as it provides more context
-for the use.
 
+Tracing is attractive as it provides a consistent 
+behavior between experiments and use cases.
+In addition, it is easier to automate and sample arbitrary applications without assistance from each user.
+This allows the solution to port between applications
+quickly without having to delve in to the applications
+specific configuration.
+As previously mentioned, there are several methods for
+obtaining a trace from a file.
+
+Despite assumption that both CVMFS and FUSE will be limited
+on the HPC site, this methods was used as it is reasonable to
+allow for sampling of these jobs on WLCG. 
+WLCG provides the flexibility of using CVMFS and FUSE, without
+having to implement or provision a separate tracing infrastructure
+at each site.
+Additionally, as many of these jobs would have originally been 
+destine to run on WLCG, the sampling sizes are unlikely to 
+create significant overhead.
+Using CVMFS for the tracing allows CVMFS's just-in-time deployment
+of files to patch the environment and give an accurate view without
+the risk of missing files.
+
+\begin{figure}
+\includegraphics[width=\linewidth]{curated/cdf/cdf.pdf}
+\caption{The distribution of file size for each repository.
+From this we can see that the large majority of files
+accumulate in the kilobyte to megabyte range.}
+\label{fig:cdf}
+\if 0
+lots of small files
+table shows duplication
+long tail of large files
+different scales, similar usage across repos
+
+\fi
+\end{figure}
+
+\subsubsection{Packages}
 The second automated method is to use static
 analysis for discover requirements.
 This would allow the application to be analyzed
@@ -414,6 +456,10 @@ such as bash scripts for pointing to correct
 software versions, or 
 analyzing SCRAM\cite{DBLP:journals/corr/cs-OH-0306014} lines
 to determine the configuration.
+In the SFT CVMFS repository, where many core research packages are located,
+dependencies are mapped for many packages using buildinfo files.
+Chaining these buildinfo files together allow for a rough dependency
+tree to be create, which was used to sample for \Cref{fig:picks}.
 With either of these methods the issues
 that arise come from bleeding edge or
 experiment specific code that is not directly
@@ -440,48 +486,19 @@ Packages also require that there is consistent
 software organization, which often differs
 between repositories.
 
-For the analysis and creation pipeline discussed
-later in the paper, tracing was used to provide
-the file specifications. 
-Tracings flexibility between repositories
-and more precises file inclusion allow
-for a lean package that provides coverage for
-an experiment.
+\begin{figure}
+\includegraphics[width=\linewidth]{curated/closure/closure.pdf}
+\caption{Difference in number of packages and size when accounting for dependency based closure in selection.}
+\label{fig:picks}
+\if 0
+you get more than you ask for
+smaller requirements have relatively large responses
+non-linear, so bigger ones have more duplicates
+appraoches repo size in limit
+merging is subject to drop-off(more duplication)
+\fi
+\end{figure}
 
-\subsection{Trace Sampling}
-Tracing is attractive as it provides a consistent 
-behavior between experiments and use cases.
-In addition, it is easier to automate and sample arbitrary applications without assistance from each user.
-This allows the solution to port between applications
-quickly without having to delve in to the applications
-specific configuration.
-As previously mentioned, there are several methods for
-obtaining a trace from a file.
-
-Tracing was implemented in the CVMFS software and
-interacts via the FUSE interface.
-The tracing utility has been implemented in a way that 
-minimizes the overhead if the tracer is deactivated and 
-also minimizes the measurable overhead in the FUSE calls for an activated tracer 
-by delegating the actual log writing to a separate thread to avoid blocks 
-during the accesses to CVMFS. 
-In fact, for a deactivated tracer the entire overhead consists of 
-a single inline if for a subset of the FUSE calls.
-This allows the actual observed CVMFS usage to  be tracked
-and then used for determining the file specification.
-
-Despite assumption that both CVMFS and FUSE will be limited
-on the HPC site, this methods was used as it is reasonable to
-allow for sampling of these jobs on WLCG. 
-WLCG provides the flexibility of using CVMFS and FUSE, without
-having to implement or provision a separate tracing infrastructure
-at each site.
-Additionally, as many of these jobs would have originally been 
-destine to run on WLCG, the sampling sizes are unlikely to 
-create significant overhead.
-Using CVMFS for the tracing allows CVMFS's just-in-time deployment
-of files to patch the environment and give an accurate view without
-the risk of missing files.
 
 
 \subsection{Unique Consistency Requirements}
@@ -508,38 +525,6 @@ Git and CVMFS as the contents' checksums are
 computed at ingestion into the repository.
 This method relies on the underlying system computing
 and providing this information for verification.
-
-The use of a global revision number provides a quick reference
-on the state of the repository at the highest level.
-Global revision numbers can instantly verify the expected
-contents, but does not give evidence of compatibility between
-revisions.
-As the revision number is global, any change to the repository
-is reflected in a change to the revision number, which means 
-some software is unchanged between revisions.
-This method leaves much to be desired when using common stable
-packages that change irregularly.
-
-Aside from computing and checking the contents of the
-repository or its files, it is possible to verify the
-software using experiment computation.
-This is a common method used to testing software
-and works equally when the target software provides
-coverage of the features used by the application.
-The difficulty here is in providing tests that
-behave consistently, verify if computation is
-incorrect, and cover the desired features.
-Though it is possible for the submitting user
-to provide test with coverage, application
-developers have a better grasp of it usage
-and how to provide coverage in testing.
-An additional method is to run the application
-on a determined site for initial results and
-compare in the future for verification, but
-this relies on deterministic code which is 
-not always the assumption in HEP computing.
-
-
 
 \begin{table*}[t]
 \begin{center}
@@ -592,14 +577,10 @@ sft & 3,996,527 & 128,609,000 & 4:17:58 &
 \end{tabular}
 \caption{CVMFS repository sizes.}
 \label{tab:repo-sizes}
-This table shows the size, number of inodes, and the amount
+This table shows the size, number of inodes (rounded to nearest thousand), and the amount
 of duplicate data that is eliminated using CVMFS.
 \end{center}
 \end{table*}
-
-\if 0
-I AM NOT SURE WHICH WE WILL USE. WRAP THIS UP LATER.
-\fi
 
 \section{Realization of CVMFS Projection}
 
@@ -680,77 +661,51 @@ mounted for use.
 In \Cref{figure:shrinkwrap-arch} you can see an outline
 of the design of the Shrinkwrap utility.
 
-These methods were compared to showcase Shrinkwraps
-behavior and evaluate usage performance.
-The first analysis compares all three methods pulling 
-an entire repository, to allow comparision between the
-three.
-GRAPH OF DEDUPLICATED DATA/FULL REPO SIZE/TIME TO CREATE.
-The second looks at the time to update existing repositories 
-between verison.
-GRAPH UPDATE TIME ON FULL REPO AND MAYBE SUB REPO(SUB REPO ONLY COMPARES RSYNC AND SHRINKWRAP)
-The third looks at hosting several projection at once and
-switching between them.
-COMPARES RSYNC AND SHRINKWRAP. UNCVMFS CANT COMPETE.
-
-
-\begin{figure}[h]
-\caption{COMPARISON OF SHRINKWRAP unCMVFS and RSYNC}
-\label{figure:projection-comp}
-\end{figure}
-
 \subsection{Packaging Projections}
 
-All of the above methods describe utilize CVMFS
+All of the above methods described utilize CVMFS
 and rely on the internet connection to create
 the projections.
-A core assumption of this paper is that internet
+A core assumption is that external network
 access is limited at the compute nodes, so a method
 is needed to transform and use these projections
 for computation.
-For this we looked at several methods for providing
-these projections and compared using 
+For this several methods for providing
+these projections using 
 Container images (images specific to Docker, Singularity, ect.)
-versus SquashFS images.
+or SquashFS images can be used.
 The goal is to find a flexible, compatible intermediate
 format that allows projections to be moved between sites
 and technologies.
 For this purpose, Docker images, Singularity images, and 
-SqaushFS are compared on their time to create,
-storage requirements, and most importantly compatibility
-with several used technologies, namely 
-Docker, Singularity, and Shifter.
+SqaushFS are interchangeable as outputs of the Shrinkwrap process
+and changed as needed for each use case as seen below.
+
+%are compared on their time to create,
+%storage requirements, and most importantly compatibility
+%with several used technologies, namely 
+%Docker, Singularity, and Shifter.
 
 The first aspect is the creation of these images.
 From a defined projection of a repository
 what are the steps needed to create each of these image types.
 
-When creating these images for analysis jobs its often the case that several
-of these images may be created and used in the system.
-Using Shrinkwrap to organize the repository data and projections,
-the impact of an increasing number of images can be see in 
-\Cref{figure:spec-size}.
-This graph illustrates a new challenge that needs to be addressed.
-As the number of experiments run and projections hosted by Shrinkwrap
-increase. 
-The raw number of images that need to be host increases to an unmanageable
-size.
-A solution is needed for how to manage these images and still
-provide responsive execution of HEP analysis on HPC.
-
-\subsection{Use Cases of Shrinkwrap}
-%Here we illustrate several real world use cases.
-%These use cases are being used as the existing solutions
-%were not feasible and a new approach was needed.
-%In analyzing these use cases we can see the beginnings of
-%the problem outlined in the previous subsection.
-
 \subsubsection{Atlas at NERSC}
 
-We are currently discussing options to integrate our shrinkwrap utility into the HPC deployment processes of ATLAS as we believe that the proposed software solution can help to reduce the overhead of HPC software delivery significantly. On the one hand the actual uncvmfs export process can be optimized as the current export workflow loads the entire CVMFS repository in a first step and later on removes certain files in the exported image which were not in fact needed. This is something that can be entirely avoided through the definition of exclusion rules passed to the shrinkwrap utility.
-
-On the other hand, we believe that an export client which relies on the libcvmfs library might reduce the total overhead and therefore improve the export performance in comparison to both uncvmfs and rsync (for uncvmfs this is something that we haven’t had yet the chance to evaluate in an experiment).
-As a longer-term goal, it might be useful to start tracing ATLAS simulation workflows on a few machines to collect data that might allow further export optimizations in a later stage through automated specification building.
+As previously described, NERSC is working in collaboration the LHC ATLAS project
+to provide HPC resources for simulation and experimentation.
+NERSC is currently deploying CVMFS images as monolithic container 
+built using UnCVMFS, packaged in Squashfs images, and then containerized 
+into Shifter or Singularity format, whose final format
+relies on the target site.
+This entire process can take up to a day to complete with the majority
+of compute used to pull down and store the full CVMFS copy and storage
+needs in excess of terabytes for images.
+By combining either traced samples or statically defined requirements for 
+jobs, Shrinkwrap can reduce these images orders of magnitudes.
+Shrinkwrap which relies on the libcvmfs library reduces 
+the total overhead and eliminates unnecessary files transfers
+over UnCVMFS by allowing selections and rsync using data deduplication.
 
 \subsubsection{Benchmarking Containers}
 For benchmarking purposes, the CERN IT-Department is interested in a ``Benchmark in a Container'' solution which allows the distribution of standalone container images for system performance evaluations. For such benchmarks the IT-Department typically relies on simulation workflows provided by CERN's experiment collaborations. To execute these benchmarks in an easily portable and reproducible manner, it is of high interest to package these software workflows into containers. Since the workflows' software stacks are usually stored inside CVMFS repositories, this is a perfect use case for the shrinkwrap utility and its Docker injection functionality.
@@ -791,59 +746,6 @@ a number of issues in real-world usage led us to conculde that a somewhat more s
 
 \subsection{Simulating Job Submissions}
 
-\begin{figure}
-\includegraphics[width=\linewidth]{curated/cdf/cdf.pdf}
-\label{fig:cdf}
-\if 0
-lots of small files
-table shows duplication
-long tail of large files
-different scales, similar usage across repos
-
-\fi
-\end{figure}
-
-\begin{figure}
-\includegraphics[width=\linewidth]{curated/closure/closure.pdf}
-\label{fig:picks}
-\if 0
-you get more than you ask for
-smaller requirements have relatively large responses
-non-linear, so bigger ones have more duplicates
-appraoches repo size in limit
-merging is subject to drop-off(more duplication)
-\fi
-\end{figure}
-
-To evaluate the effect of including dependencies in container images,
-we made a large number of random selections of packages from the SFT repo and then compared with the set of dependencies required by each selection.
-Figure~\ref{fig:picks} shows the results over a large number of selection sizes.
-We observe of course that selection size increases uniformly along the $x$ axis.
-The on-disk size of the selections appears to increase proportionally to selection size.
-Recursively including the dependencies of these same selections,
-however, results in a significant increase in number of packages and size on disk.
-For small selections (less than 100~packages),
-the complete images with dependencies might contain 5x as many packages as requested,
-with storage increasing proportionally.
-With larger selections, however,
-this increase becomes less prominent.
-This non-linear change is the result of the tree structure of the software dependencies.
-There are a number of core components that are transitive dependencies of a large number of packages.
-These common dependencies are only included once,
-so subsequent selections that depend on them do not add them again.
-As the number of selections increases,
-this curve will approach the total repo size.
-Also note that the non-linear increase in size with increasing selection size means that the size of combining two selections of 100 packages (and their dependencies) is not as simple as adding them together.
-Due to duplication, we would expect the resulting combined size to be lower,
-as if choosing 200 packages from the start.
-
-
-\if 0
-spread across everyone, lot of commonality/overlap
-few with very high usage, very large number of rarely used
-lot not observed
-\fi
-
 Since there are currently few regular CVMFS on HPC users,
 we decided to simulate the activity of users requesting container images.
 We decided to simulate at the granularity of packages rather than individual files,
@@ -873,6 +775,35 @@ the prospective user base for our container management system is limited.
 We were, however, informed of some researchers and groups experimenting with static mirrors of CVMFS for container images,
 including projects at NERSC and Stanford University,
 with one of the setups available publicly at \url{https://github.com/wyang007/atlas-fat-container}.
+
+To evaluate the effect of including dependencies in container images,
+we made a large number of random selections of packages from the SFT repo and then compared with the set of dependencies required by each selection.
+Figure~\ref{fig:picks} shows the results over a large number of selection sizes.
+We observe of course that selection size increases uniformly along the $x$ axis.
+The on-disk size of the selections appears to increase proportionally to selection size.
+Recursively including the dependencies of these same selections,
+however, results in a significant increase in number of packages and size on disk.
+For small selections (less than 100~packages),
+the complete images with dependencies might contain 5x as many packages as requested,
+with storage increasing proportionally.
+With larger selections, however,
+this increase becomes less prominent.
+This non-linear change is the result of the tree structure of the software dependencies.
+There are a number of core components that are transitive dependencies of a large number of packages.
+These common dependencies are only included once,
+so subsequent selections that depend on them do not add them again.
+As the number of selections increases,
+this curve will approach the total repo size.
+Also note that the non-linear increase in size with increasing selection size means that the size of combining two selections of 100 packages (and their dependencies) is not as simple as adding them together.
+Due to duplication, we would expect the resulting combined size to be lower,
+as if choosing 200 packages from the start.
+
+
+\if 0
+spread across everyone, lot of commonality/overlap
+few with very high usage, very large number of rarely used
+lot not observed
+\fi
 
 Based on correspondence with researchers,
 we made some general observations about the behaviors and requirements of applications we need to support.
@@ -1137,81 +1068,6 @@ This computed distance can be cached to ensure that we estimate the distance bet
 Since comparisons using MinHash take constant time for a given probability bound independent of the size of the sets involved,
 we can quickly identify cached projections that are similar to the new request.
 
-
-\begin{figure}
-\includegraphics[width=\linewidth]{curated/time-series/time-series.pdf}
-\label{fig:series}
-\if 0
-zoomed out?
-cache limit, deletes start
-merge tracks writes, it's the dominant factor
-hits grow gradually as cache merges and fills
-deletes help prune useless stuff, remaining should be frequent hits
-far ends are either insert or merge, middle alphas have both
-\fi
-\end{figure}
-
-Figure~\ref{fig:series} shows a single simulation of the image management system,
-with several notable details.
-First, we see that most of the operations are merges.
-This makes sense, as this simulation was at fairly high $\alpha$.
-The total bytes written also closely tracks merges,
-indicating that merging is the dominant source of I/O.
-We can still see inserts over the course of the simulation.
-At more extreme $\alpha$ values,
-we would expect to see one of these operations almost exclusively.
-As the data in cache continues to rise,
-we eventually see the cache limit,
-after which the delete count starts increasing.
-Over the course of the simulation,
-inserts and deletes are filling and emptying the cache such that it remains close to its storage limit.
-We also observe the number of cache hits continue to rise despite deletions.
-As we will see, merging allows for a greater proportion of hits even if the amount of data remains constant.
-This is because frequently used data can be merged,
-reducing duplication.
-The cache limit then ensures that infrequently used parts are eventually removed.
-
-% explain alpha plot
-
-Sweeping over the range of $\alpha$ values in this way,
-we can immediately see differences in the frequency of simulated operations.
-Figure~\ref{fig:opcounts} shows the upper range of $\alpha$ values where behavior differences appear.
-From the lower values on the left,
-the insert and delete counts are the primary (or only) operations,
-with number of hits relatively constant.
-This corresponds to a simple LRU-based cache.
-The insert count is higher due to cache filling,
-but the two tend to increase in lockstep.
-As $\alpha$ increases,
-image merges become more probable.
-The merge count in the figure steadily increases throughout most of the upper range,
-while inserts and deletes decrease.
-This suggests that at high $\alpha$ values,
-the cache space would be more efficiently used,
-with some of the duplication merged out.
-In the extreme case with $\alpha=1$,
-every request is merged into a single image in cache,
-hence the sudden increase in hit rate and decrease in total merges at the far right of Figure~\ref{fig:opcount}.
-Note that as merging increases,
-the proportion of hits generally also increases.
-This indicates that more of the requests can be satisfied by previously merged images in the cache.
-From the perspective of the system,
-this is beneficial as there is no extra time or compute cost for handling a larger proportion of images.
-
-\begin{figure}
-\includegraphics[width=\linewidth]{curated/comparative/operation_count.pdf}
-\label{fig:opcounts}
-\if 0
-inserts and merges switch as alpha goes up
-more hits with merging
-allows better responsiveness? image is immediately ready
-inserts and deletes go to zero, so storage use will taper off
-drop off: we keep everything, so 500 requests get merged; hit count goes up correspondingly since everything is in cache
-not gonna be close to cache limit
-inserts and deletes track: corresponds to LRU, inserts while filling then balanced
-\fi
-\end{figure}
-
 To decide if two projections are ``close'',
 we define the parameter $\alpha$ as the maximal Jaccard distance between closely related projections.
 Since Jaccard distance is by definition between zero and one,
@@ -1285,6 +1141,72 @@ Without regular use,
 the bloated image will eventually be removed in LRU order.
 Choice of $\alpha$ allows an upper limit on the amount of useless bloat in images.
 
+\begin{figure}
+\includegraphics[width=\linewidth]{curated/time-series/time-series.pdf}
+\label{fig:series}
+\if 0
+zoomed out?
+cache limit, deletes start
+merge tracks writes, it's the dominant factor
+hits grow gradually as cache merges and fills
+deletes help prune useless stuff, remaining should be frequent hits
+far ends are either insert or merge, middle alphas have both
+\fi
+\end{figure}
+
+Figure~\ref{fig:series} shows a single simulation of the image management system,
+with $\alpha=0.0.75$, cache size XXX, ...
+First, we note that most of the operations are merges.
+This makes sense, as this simulation was at fairly high $\alpha$.
+The total bytes written also closely tracks merges,
+indicating that merging is the dominant source of I/O.
+We can still see inserts over the course of the simulation.
+At more extreme $\alpha$ values,
+we would expect to see one of these operations almost exclusively.
+As the data in cache continues to rise,
+we eventually see the cache limit,
+after which the delete count starts increasing.
+Over the course of the simulation,
+inserts and deletes are filling and emptying the cache such that it remains close to its storage limit.
+We also observe the number of cache hits continue to rise despite deletions.
+As we will see, merging allows for a greater proportion of hits even if the amount of data remains constant.
+This is because frequently used data can be merged,
+reducing duplication.
+The cache limit then ensures that infrequently used parts are eventually removed.
+
+\begin{figure}
+\includegraphics[width=\linewidth]{curated/time-series/time-series.pdf}
+\label{fig:series}
+\if 0
+zoomed out?
+cache limit, deletes start
+merge tracks writes, it's the dominant factor
+hits grow gradually as cache merges and fills
+deletes help prune useless stuff, remaining should be frequent hits
+far ends are either insert or merge, middle alphas have both
+\fi
+\end{figure}
+
+Figure~\ref{fig:series} shows a single simulation of the image management system,
+with several notable details.
+First, we see that most of the operations are merges.
+This makes sense, as this simulation was at fairly high $\alpha$.
+The total bytes written also closely tracks merges,
+indicating that merging is the dominant source of I/O.
+We can still see inserts over the course of the simulation.
+At more extreme $\alpha$ values,
+we would expect to see one of these operations almost exclusively.
+As the data in cache continues to rise,
+we eventually see the cache limit,
+after which the delete count starts increasing.
+Over the course of the simulation,
+inserts and deletes are filling and emptying the cache such that it remains close to its storage limit.
+We also observe the number of cache hits continue to rise despite deletions.
+As we will see, merging allows for a greater proportion of hits even if the amount of data remains constant.
+This is because frequently used data can be merged,
+reducing duplication.
+The cache limit then ensures that infrequently used parts are eventually removed.
+
 \section{Evaluation}
 
 To evaluate the viability of our approach in automatically deduplicating a container image store,
@@ -1294,6 +1216,53 @@ and that old images or poor decisions are eventually removed from the system.
 Choosing $\alpha$ too far in either direction will result in excessive storage overhead due to duplicated components,
 or excessive compute and network overhead repeatedly merging largely unrelated images.
 Our goal in this evaluation is therefore to choose $\alpha$ so as to minimize the storage and compute costs associated with maintaining a collection of images.
+
+Since our simulation uses random simulated requests,
+there is noticable variability between individual simulations.
+Thus for a given choice of cache size, job count, etc.
+we repeated the simulation 20 times and reported the median behavior over the runs.
+At each choice of $\alpha$ (in steps of 0.05)
+we performed a set of 20 simulated runs,
+allowing us to plot various measurements of the system versus $\alpha$.
+
+Sweeping over the range of $\alpha$ values in this way,
+we can immediately see differences in the frequency of simulated operations.
+Figure~\ref{fig:opcounts} shows the upper range of $\alpha$ values where behavior differences appear.
+From the lower values on the left,
+the insert and delete counts are the primary (or only) operations,
+with number of hits relatively constant.
+This corresponds to a simple LRU-based cache.
+The insert count is higher due to cache filling,
+but the two tend to increase in lockstep.
+As $\alpha$ increases,
+image merges become more probable.
+The merge count in the figure steadily increases throughout most of the upper range,
+while inserts and deletes decrease.
+This suggests that at high $\alpha$ values,
+the cache space would be more efficiently used,
+with some of the duplication merged out.
+In the extreme case with $\alpha=1$,
+every request is merged into a single image in cache,
+hence the sudden increase in hit rate and decrease in total merges at the far right of Figure~\ref{fig:opcount}.
+Note that as merging increases,
+the proportion of hits generally also increases.
+This indicates that more of the requests can be satisfied by previously merged images in the cache.
+From the perspective of the system,
+this is beneficial as there is no extra time or compute cost for handling a larger proportion of images.
+
+\begin{figure}
+\includegraphics[width=\linewidth]{curated/comparative/operation_count.pdf}
+\label{fig:opcounts}
+\if 0
+inserts and merges switch as alpha goes up
+more hits with merging
+allows better responsiveness? image is immediately ready
+inserts and deletes go to zero, so storage use will taper off
+drop off: we keep everything, so 500 requests get merged; hit count goes up correspondingly since everything is in cache
+not gonna be close to cache limit
+inserts and deletes track: corresponds to LRU, inserts while filling then balanced
+\fi
+\end{figure}
 
 \begin{figure}
 \includegraphics[width=\linewidth]{curated/comparative/distribution_efficiency.pdf}
@@ -1314,6 +1283,8 @@ one curve might be more important for you
 effects are not uniform/balanced gentle drop, massive spike in overhead on right
 \fi
 \end{figure}
+
+\subsection{Determining a Viable Range for $\alpha$}
 
 When sweeping over the range of $\alpha$ values,
 there are a large number of metrics available to summarize each simulation run.
@@ -1382,20 +1353,34 @@ As shown in Figure~\ref{fig:opcounts},
 the amount of I/O and compute to update images becomes much larger if $\alpha$ is set too high.
 These two limits define a range of viable values for $\alpha$.
 There is no general rule for the placement of these limits,
-wh depends strongly on the performance characteristics of the execution environment,
+which depends strongly on the performance characteristics of the execution environment,
 as well as the priorities of the administrators in optimizing the system.
-
+Rather than defining where these limits fall,
+we give per-site considerations in choosing limits in Section ??.
 
 \begin{figure}
 \includegraphics[width=\linewidth]{curated/comparative/cache_efficiency.pdf}
+\label{fig:cache-eff}
 justification for cache efficiency
 unique vs total
 full x range?
 merging can give more unique data in less cache space
 \end{figure}
 
+Figure~\ref{fig:cache-eff} shows the actual data sizes used to calculate the cache efficiency.
+Without merging, the unique data makes up a small proportion of the cache.
+With increased merging, the amount of unique data increases.
+For sufficiently high $\alpha$,
+merges occur more frequently than cache inserts,
+resulting a drop in total storage size.
+On the far right of Figure~\ref{fig:cache-eff},
+the entire cache contents are merged into a single large image,
+so that the unique and total data sizes become equal.
+The cache efficiency metric is affected both by the increase in unique data and by the decrease in total cache size.
+
 \begin{figure}
 \includegraphics[width=\linewidth]{curated/comparative/container_efficiency.pdf}
+\label{fig:container-eff}
 \if 0
 related to container efficiency: not exact but shows it
 too much jitter from individual requests, so cumulative
@@ -1407,8 +1392,21 @@ really steep at high alpha
 \fi
 \end{figure}
 
+Figure~\ref{fig:container-eff} shows the cumulative costs of creating and updating images relative to the cost of simply providing the requested images.
+These costs illustrate the effect of container efficiency over the course of a simulated run.
+Without merging, the actual I/O and compute costs in the system closely follow the requests.
+In Figure~\ref{fig:container-eff} the actual I/O is slightly smaller than the requested amount due to caching:
+the system can sometimes reuse images without performing any I/O.
+As $\alpha$ increases, the cost of updating and merging images comes to dominate the total cost.
+Administrators migh decide, for example,
+to spend at most twice the compute and I/O time relative to the the actual requested operations.
+This would correspond to the upper compute limit shown on \label{fig:dist-eff}.
+Depending on the priorities at a particular execution site,
+either the storage utilization or compute and I/O time could be the critical factor in optimizing performance.
+
 \begin{figure}
 \includegraphics[width=\linewidth]{curated/comparative/distribution_efficiency_comp.pdf}
+\label{fig:comp-eff}
 \if 0
 different data patterns cause different effects
 random has high utilization
@@ -1430,6 +1428,36 @@ mild but noticable difference from tree, more natural approximation to real usag
 \fi
 \end{figure}
 
+We also compared the efficiencies of several types simulated images under a range of $\alpha$ values.
+For the previous discussion, synthetic images were generated taking into account both the tree of package dependencies and usage statistics.
+Figure~\ref{fig:comp-eff} shows a representative simulation with two other synthetic image types included.
+First, we measured images considering only the dependency relationships but not usage.
+These images show similar behavior to those previously discussed,
+albeit with slightly lower efficiencies.
+More realistic images primarily make the same trends more pronounced.
+This suggests that even with random, non-realistic requests,
+the tree structure of package dependencies is sufficient to produce duplication in the cache.
+The other type of synthetic image shown in Figure~\ref{fig:comp-eff} is purely randomly generated.
+The set of packages in each image was chosen uniformly randomly from the full SFT repo.
+These random images do not take into account usage statistics or package dependencies,
+making the software in them entirely nonfunctional.
+For the random images,
+we observe markedly different cache behavior.
+The cache efficiency is much higher,
+indicating a greater proportion of unique data in the cache.
+Since the image contents were selected purely at random,
+this is expected.
+The container efficiency is also high over a much larger range of $\alpha$ values.
+This is because there is effectively no merging until extremely high $\alpha$.
+Since image contents are purely random,
+there is no correlation between different images.
+Thus, it is much more difficult to find images similar enough to merge until the $\alpha$ value is very lax.
+This would indicate that our merging strategy is not applicable to arbitrary collections of data.
+Random images show little to no effect for most $\alpha$ values.
+Our merging strategy, which takes advantage of duplicated content included as a result of dependencies in software,
+would be ill advised for situations that are not known to follow similar patterns of duplication.
+
+\if 0
 \subsection{Quantifying Image Management Costs}
 
 The next step in evaluation is to define metrics describing the collection of cached containers.
@@ -1470,8 +1498,9 @@ With poor cache efficiency,
 the available storage for the system cache is wasted on repeated copies of the same data.
 Improving cache efficiency allows for more more unique image data within the same storage space,
 or equivalently allows the same set of job requests to be served efficiently from a smaller cache.
+\fi
 
-\subsection{Effect of $\alpha$ Threshold}
+\subsection{System-specific Effects of $\alpha$ Threshold}
 
 \begin{figure*}
 \includegraphics[width=0.48\linewidth]{curated/sensitivity/container_efficiency_cache_percent_plt.pdf}
@@ -1483,6 +1512,7 @@ or equivalently allows the same set of job requests to be served efficiently fro
 \includegraphics[width=0.48\linewidth]{curated/sensitivity/container_efficiency_uses_percent_plt.pdf}
 \hfill
 \includegraphics[width=0.48\linewidth]{curated/sensitivity/cache_efficiency_uses_percent_plt.pdf}
+\label{fig:sensitivity}
 \if 0
 [t] "just buy more cache"
 efficiency is worse, since cache holds on to lots of questionable data
@@ -1502,6 +1532,47 @@ general trends of merging, not interesting by themselves
 \fi
 \end{figure*}
 
+In Figure~\ref{fig:sensitivity}, we plot efficiency curves for a range of simulation conditions.
+The left column shows container efficiency,
+while the right column shows cache efficiency.
+In the first row, the number of jobs and the amount of repetition are constant while the cache size is varied.
+In the second row, the number of unique requests is varied while holding the other parameters constant,
+and the third row varies the number of times each job is submitted while holding the rest constant.
+
+The size of the cache has an inverse relationship with both the container and cache efficiency.
+A larger cache can of course hold a larger number of images,
+but since each image contains significant duplicated portions,
+increasing cache size tends to decrease cache efficiency.
+Conversely, small caches more quickly evict images so that ineffective merges and similar images tend not to remain in cache too long.
+A larger cache also allows for more opportunities to merge images,
+leading to decreased container efficiency.
+When deciding how to handle a request,
+a large cache full of images is much more likely to contain an image suitable for merging.
+With a small cache, opportunities to merge are much more dependent on the order in which requests happen to come.
+
+The effect of varying the number of unique jobs is less pronounced than the effect of cache size.
+Streams of 500 and 1000 unique jobs show nearly indistinguishable behavior,
+indicating that by 500 jobs the system has reached a steady state.
+Continuing with an arbitrarily long stream should not result in significant performance changes.
+It appears that 100 unique jobs were not sufficient to fill the cache and reach a steady state.
+In this case the container efficiency is somewhat decreased over a range of $\alpha$ values,
+suggesting that some ineffective merges had not made their way out of the cache yet.
+The cache efficiency in this case is slightly increased.
+This would suggest that before reaching a steady state,
+the contents of the cache are more assorted and some unnecessary data remain in cache.
+
+The effect of varying the number of times each unique job is submitted appear minimal at best.
+As discussed with the previous row,
+a stream of 500 unique images should be sufficient to reach a steady state.
+For a sufficiently large cache, therefore,
+it appears that the efficiency is determined by the amount of unique data and fairly insensitive to how much those pieces of data are used.
+This simulation is somewhat unrealistic in that each job is repeated a uniform number of times.
+In real systems, we expect more variation in the frequency of repeated jobs.
+We predict that a steady, non-uniform distribution of frequencies would result in the same behavior as shown in the bottom row of Figure~\ref{fig:sensitivity},
+while changes in the frequencies of jobs (e.g. a new user starting an experiment)
+would disturb the steady state and produce effects similar to those in the middle row.
+
+\if 0
 Using these metrics for cost and overhead,
 we carried out an evaluation of our container image management scheme as follows.
 First, we somewhat arbitrarily chose a storage limit of 1~TB for our simulated image cache.
@@ -1543,12 +1614,16 @@ This configuration, however,
 has substantial overhead for image creation and maintenance.
 This is a real complaint from administrators at NERSC testing full-repo images.
 The high cost of creation means that such large images can only be infrequently created or updated.
+\fi
 
+\subsection{Steps to Determining $\alpha$}
+TODO
 
 \section{Related Work}
+TODO
 
 \section{Conclusion}
-
+TODO
 
 \section{Reproducibility Data}
 
