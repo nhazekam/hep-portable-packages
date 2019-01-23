@@ -81,9 +81,10 @@ class BlindStream:
         return frozenset(blind(self.deps, self.stream.next()))
 
 class Cache:
-    def __init__(self, deps, alpha, reuse, capacity):
+    def __init__(self, deps, alpha, reuse, capacity, container_limit):
         self.reuse = reuse
         self.capacity = capacity
+        self.container_limit = container_limit
         self.deps = deps
         self.size = 0
         self.alpha = alpha
@@ -149,10 +150,13 @@ class Cache:
         }
 
     def merge(self, existing, img):
-        self.size -= self.contents.pop(existing)
         new_img = existing | img
-        self.contents[new_img] = size(self.deps, new_img)
+        img_size = size(self.deps, new_img)
+        if self.container_limit > 0 and img_size > self.container_limit:
+            return
+        self.contents[new_img] = img_size
         self.size += self.contents[new_img]
+        self.size -= self.contents.pop(existing)
         self.bytes_written += self.contents[new_img]
         self.merges += 1
         return size(self.deps, img), self.contents[new_img], new_img
@@ -189,8 +193,10 @@ class Cache:
             if self.issubset(img, a[1]):
                 return self.hit(a[1], img)
 
-        if len(candidates) > 0:
-            return self.merge(candidates[0][1], img)
+        for a in candidates:
+            merge_result = self.merge(a[1], img)
+            if merge_result is not None:
+                return merge_result
 
         return self.insert(img)
 
@@ -220,18 +226,20 @@ class Cache:
         return self.log
 
 def run(params):
-    alpha, deps, deps_freq, reuse, jobs, capacity = params
+    alpha, deps, deps_freq, reuse, jobs, capacity, container_limit, tree, blind = params
     out = {}
-    for i in range(10):
-        b = Cache(deps, alpha, reuse, capacity)
-        #c = Cache(deps, alpha, reuse, capacity)
-        #d = Cache(deps, alpha, reuse, capacity)
+    for i in range(20):
+        b = Cache(deps, alpha, reuse, capacity, container_limit)
         b.process(itertools.islice(DistStream(deps, deps_freq), jobs))
-        #c.process(itertools.islice(Stream(deps), jobs))
-        #d.process(itertools.islice(BlindStream(deps), jobs))
         out['dist'] = b.log
-        #out['tree'] = c.log
-        #out['blind'] = d.log
+        if tree:
+            c = Cache(deps, alpha, reuse, capacity, container_limit)
+            c.process(itertools.islice(Stream(deps), jobs))
+            out['tree'] = c.log
+        if blind:
+            d = Cache(deps, alpha, reuse, capacity, container_limit)
+            d.process(itertools.islice(BlindStream(deps), jobs))
+            out['blind'] = d.log
     sys.stderr.write('{} '.format(alpha))
     return out
     
@@ -241,6 +249,9 @@ if __name__ == '__main__':
     parser.add_argument('--reuse', type=int)
     parser.add_argument('--jobs', type=int)
     parser.add_argument('--cache', type=float)
+    parser.add_argument('--container', type=float)
+    parser.add_argument('--tree', action="store_true")
+    parser.add_argument('--blind', action="store_true")
     args = parser.parse_args()
 
     deps = json.load(sys.stdin)
@@ -263,22 +274,26 @@ if __name__ == '__main__':
         "dist": {},
     }
 
-    alphas = [x / 100.0 for x in range(40, 101)]
+    alphas = [x / 100.0 for x in range(0, 101, 5)]
 
     for alpha in alphas:
-        out['tree'][alpha] = []
-        out['blind'][alpha] = []
         out['dist'][alpha] = []
+        if args.tree:
+            out['tree'][alpha] = []
+        if args.blind:
+            out['blind'][alpha] = []
 
     p = multiprocessing.Pool()
-    results = p.map(run, [(i, deps, deps_freq, args.reuse, args.jobs, args.cache) for i in alphas])
+    results = p.map(run, [(i, deps, deps_freq, args.reuse, args.jobs, args.cache, args.container, args.tree, args.blind) for i in alphas])
     #results = map(run, [(i, deps, deps_freq, args.reuse, args.jobs, args.cache) for i in alphas])
     sys.stderr.write('\n')
     sys.stderr.flush()
 
     for i in range(len(alphas)):
-        #out['tree'][alphas[i]].append(results[i]['tree'])
-        #out['blind'][alphas[i]].append(results[i]['blind'])
         out['dist'][alphas[i]].append(results[i]['dist'])
+        if args.tree:
+            out['tree'][alphas[i]].append(results[i]['tree'])
+        if args.blind:
+            out['blind'][alphas[i]].append(results[i]['blind'])
 
     json.dump(out, sys.stdout, indent=2)

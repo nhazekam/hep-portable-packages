@@ -4,6 +4,7 @@ all: \
 	sft.buildinfo.json \
 	sft.du.txt \
 	sft.deps.json \
+	sft.usage.json \
 	sft.recent.json \
         sft.dist.dat \
         sft.sim.json \
@@ -62,6 +63,9 @@ sft.lst.txt:
 %.dist.dat: %.deps.json
 	./picks.py < $< > $@
 
+lxplus.%.dat: sim.%.json
+	./dat.py dist < $< > $@
+
 %.lxplus.dat: %.sim.json
 	./dat.py dist < $< > $@
 
@@ -74,11 +78,62 @@ sft.lst.txt:
 %.dot: %.deps.json %.recent.json
 	./graph.py $^ > $@
 
-%.plt.pdf: %.plt sft.tree.dat sft.blind.dat sft.lxplus.dat common.plt
-	gnuplot -c $< $@ sft.tree.dat sft.blind.dat sft.lxplus.dat
+nanner.%.plt.pdf: par_nanner.plt lxplus.%.dat common.plt
+	gnuplot -c $< $@ lxplus.$*.dat
 
-%.dist.pdf: dist.plt %.dist.dat
+CACHE = 2
+REQUEST = 500
+USES = 5
+
+CACHE_DAT = $(foreach cache, 0 1 2 5 10 ,lxplus.$(cache).$(REQUEST).$(USES).dat)
+REQUEST_DAT = $(foreach req, 10 100 500 1000 ,lxplus.$(CACHE).$(req).$(USES).dat)
+USES_DAT = $(foreach uses, 1 5 10 25 ,lxplus.$(CACHE).$(REQUEST).$(uses).dat)
+
+nanner.cache.plt.pdf : span.nanner.plt ${CACHE_DAT} common.plt
+	gnuplot -c  $< $@ nanner ${CACHE_DAT}
+
+nanner.request.plt.pdf : span.nanner.plt ${REQUEST_DAT} common.plt
+	gnuplot -c  $< $@ nanner ${REQUEST_DAT}
+
+nanner.uses.plt.pdf : span.nanner.plt ${USES_DAT} common.plt
+	gnuplot -c  $< $@ nanner ${USES_DAT}
+
+
+%.cache.percent.plt.pdf : span.generic.percent.plt ${CACHE_DAT} common.plt
+	gnuplot -c  $< $@ $* ${CACHE_DAT}
+
+%.request.percent.plt.pdf : span.generic.percent.plt ${REQUEST_DAT} common.plt
+	gnuplot -c  $< $@ $* ${REQUEST_DAT}
+
+%.uses.percent.plt.pdf : span.generic.percent.plt ${USES_DAT} common.plt
+	gnuplot -c  $< $@ $* ${USES_DAT}
+
+
+
+%.cache.plt.pdf : span.generic.plt ${CACHE_DAT} common.plt
+	gnuplot -c  $< $@ $* ${CACHE_DAT}
+
+%.request.plt.pdf : span.generic.plt ${REQUEST_DAT} common.plt
+	gnuplot -c  $< $@ $* ${REQUEST_DAT}
+
+%.uses.plt.pdf : span.generic.plt ${USES_DAT} common.plt
+	gnuplot -c  $< $@ $* ${USES_DAT}
+
+%.dist.pdf: dist.plt %.dist.dat 
 	gnuplot -c $^ $@
+
+NANNERS = $(foreach cache, 0 1 2 5 10,$(foreach req, 10 100 500 1000 ,$(foreach uses, 1 5 10 , nanner.$(cache).$(req).$(uses).plt.pdf)))
+
+SPAN_GRAPHS = $(foreach type, cache request uses,$(foreach field, imagesizes hitrate byteswritten overhead nanner , $(field).$(type).plt.pdf))
+
+SPAN_PERCENT_GRAPHS = $(foreach type, cache request uses,$(foreach field, cache_efficiency container_efficiency , $(field).$(type).percent.plt.pdf))
+
+.PHONY: graph_spectrum
+graph_spectrum : ${SPAN_GRAPHS} ${SPAN_PERCENT_GRAPHS}
+
+.PHONY: clean_spectrum
+clean_spectrum :
+	rm ${SPAN_GRAPHS} ${SPAN_PERCENT_GRAPHS}
 
 .PHONY: reload
 reload:
