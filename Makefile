@@ -52,10 +52,7 @@ prepress.pdf: $(NAME).pdf
 cclpapers.bib:
 	wget -O $@ http://ccl.cse.nd.edu/research/papers/bibtex.php
 
-clean: clean_results clean_paper
-
-clean_results:
-	echo "No results yet"
+clean: clean_paper
 
 clean_paper:
 	rm -f $(NAME).aux $(NAME).bbl $(NAME).blg $(NAME).dvi $(NAME).log *.log *.pdf $(LATEX_STY)
