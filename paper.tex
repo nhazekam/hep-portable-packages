@@ -14,7 +14,7 @@
 
 
 \begin{document}
-\title[Projecting Globel Filesystems into Local Containers.]{Projecting Global Filesystems into Local Containers for High-throughput Computing on HPC Resources}
+\title[Projecting Global Filesystems into Local Containers.]{Projecting Global Filesystems into Local Containers for High-throughput Computing on HPC Resources}
 
 \if 0
 
@@ -131,20 +131,19 @@ Conclusion
 
 \begin{abstract}
 Scientific applications often depend on large, complex software repositories containing libraries, tools, and frameworks in multiple versions and platforms to support many researchers.
-As a practical necessity, software repos are most commonly distributed via shared or global filesystems.
-In moving existing research to HPC environments, however,
-scientists must work around restrictions that can interfere with global software delivery methods.
-To illustrate these challenges,
-we examine CVMFS, the CernVM File System.
-CVMFS is a global, distributed filesystem that provides read-only access to experiment software and configurations for high energy physics research at CERN.
-CVMFS requires a number of network and OS configurations that are incompatible with a restrictive HPC environment.
-In this work, we introduce a set of tools and procedures for \emph{projecting} the global filesystem (or parts thereof) into local container images suitable for HPC sites.
-As part of our evaluation,
-we found that using local approximations of a global filesystem tends to introduce problems of its own in terms of compute and storage overhead.
-We thus examined several declarative and profiling-based approaches to creating more fine-grained projections to fit application requirements,
-and propose a strategy for efficiently managing these projected container images at an HPC site.
-Using our projection tools and image management strategy,
-we implemented a proof-of-concept submission system for running existing HEP analysis tasks in an HPC environment.
+Such repositories are distributed to hundreds of major computing
+facilities around the world using a global filesystem like CVMFS.
+However, not all HPC facilities permit execution nodes to
+mount and access global network resources, instead encouraging
+applications to make use of local filesystems and container
+technologies.  In this work, we present a technique for efficiently.
+\emph{projecting} a global filesystem into local resources.
+This consists of creating minimal local containers that meet
+the needs of specific jobs, balancing between the extremes
+of having many small single-purpose containers and having one
+large all-purpose containers.  We evaluate these techniques
+using data from production instances of the CVMFS global filesystem
+used by a wide variety of scientific collaborations.
 \end{abstract}
 
 
@@ -161,7 +160,67 @@ we implemented a proof-of-concept submission system for running existing HEP ana
 
 \maketitle
 
+
+
 \section{Introduction}
+
+Global scientific experiment collaborations like ATLAS, CMS, LIGO,
+and LSST make use of hundreds of thousands of cores spread across
+many computing facilities around the world in order to achieve the massive scale needed simulate and analyze data from high bandwidth
+scientific instruments.  In order to ensure consistency of software
+running at many different sites, collaborations establish global
+software repositories that publish the tested and trusted versions
+of software to be used for production runs.  These repositories
+can be quite large, consisting of thousands of software packages
+consuming millions of files and terabytes of data.  Software
+such as CVMFS~\cite{globalfs-cise-2015} is used to distribute
+these complex software stacks around the world.
+
+However, not all computing facilities make it easy to access global filesystems at runtime.
+In particular, national HPC facilities that are not associated with any
+particular experiment often prevent network connections between
+individual worker nodes and the outside world, for reasons
+of both security and system efficiency.  Such facilities instead
+encourage the use of local high performance filesystems and container
+technologies to deliver software to individual worker nodes.
+To make use of such sites, some mapping between the global
+filesystem and the locally available technologies must be provided.
+
+In this paper, we describe the problem of {\bf projecting} a global
+filesystem into the resources available at a local HPC facility.
+There are two main components to this problem.
+
+First, for a given job, we must have a means of identifying the
+subset of the global filesystem that is relevant for the current
+execution.  This can be done either by dynamic tracing of the resources
+actually used, or by static analysis of its dependency tree.
+We describe Shrinkwrap, a tool that performs this analysis on
+a Unix application, and produces a minimal container
+that can be used to execute the application, or one closely related.
+We analyze the efficiency of this tool on a selection of high
+energy physics applications, and demonstrate storage efficiency of this technique, and measure the performance and storage efficiency.
+
+Second, for a large number of jobs, we must have a method for
+managing the large number of containers that will be created.
+If one small container is created for every single job,
+site storage will overflow with duplicated data.  On the other
+hand, if one large container is constructed to satisfy all
+possible jobs, it will overflow constraints at the worker nodes.
+To address this, we develop an online algorithm that manages
+a shared storage space with multiple containers, choosing to
+either create, delete, or merge containers as new requests arrive.
+The key parameter ($\alpha$) to this algorithm allows for a
+tradeoff between the efficiency of cache storage and container size.
+
+Both techniques are evaluated in light of the properties
+of large global filesystems used in production by high
+energy physics applications.  In particular, we exploit the
+property that many jobs share a small set of frequently-used
+dependencies, and have a long tail of infrequently-used dependencies.
+We found that our approaches can effectively manage the container images for a continuous stream of submissions with varying software dependencies and versions with less storage overhead than creating a new image per application.
+In addition, our results show that applications can still take advantage of precise dependency and version specifications to reduce image creation and transfer overhead compared to simple mirroring.
+
+\if 0
 
 Scientific research has a large and rapidly growing need for computation.
 Researchers have a number of options at their disposal to meet those needs,
@@ -261,90 +320,87 @@ we simulated the behavior of our image management system over a large number of 
 We found that our approach can effectively manage the container images for a continuous stream of submissions with varying software dependencies and versions with less storage overhead than creating a new image per application.
 In addition, our results show that applications can still take advantage of precise dependency and version specifications to reduce image creation and transfer overhead compared to working with large/complete mirrored copies of CVMFS.
 
-\section{Background and Challenges}
-
-\subsection{CVMFS}
-The CernVM File System (CVMFS) is a globally distributed filesystem designed for providing efficient,
-read-only access to scientific software.
-CVMFS is primarily used for distribution of High Energy Physics (HEP) software used as part of the Large Hadron Collider (LHC) at CERN.
-Researchers at CERN use CVMFS as the primary means of distributing the analysis and simulation software they develop to the Worldwide LHC Computing Grid (WLCG).
-
-Each WLCG site commits to providing some fixed amount of computational resources for analyzing particle collision events and running simulations.
-Worker nodes at each site must be configured to mount CVMFS as a prerequisite to performing any computational tasks.
-Since CVMFS is implemented as a FUSE module,
-WLCG sites are expected to support FUSE on their worker nodes.
-CVMFS also relies on global configuration files,
-requiring administrative involvement in preparing worker nodes for WLCG jobs.
-In addition, sites generally provision some infrastructure to support CVMFS,
-such as caching proxies to reduce load created by local workers on publicly accessible filesystem servers.
-
-As a result, it is difficult to contribute computational resources toward the LHC experiments without making some site-wide provisioning and configuration changes.
-This is not an issue for the WLCG sites,
-as they provide dedicated computing resources and can customize their setups to meet the requirements of CVMFS.
-For a professor attempting to harness a campus cluster,
-on the other hand, these requirements present a serious barrier.
-Solutions exist such as
-Parrot, a debugging tool and personal filesystem developed at the University of Notre Dame,
-which sidesteps FUSE but still requires unrestricted network access and
-UnCVMFS which locally store all of CVMFS to avoid network access, 
-but relies on large storage and permission mounting.
-For computing at scale, it is important to provide a caching proxy and concise storage,
-which currently require assistance from administrators.
-
-\subsection{HPC}
-
-With the rapidly increasing demands of the LHC experiments at CERN,
-HPC resources are an appealing source of computing power to supplement the WLCG.
-Leadership class machines such as Summit, at Oak Ridge National Laboratory, will by themselves be able to perform a substantial portion of the work of the entire WLCG today.
-Use of national-scale HPC resources across the United States and Europe such as Cori at NERSC, Sierra at Lawrence Livermore National Laboratory, Piz Diant at Swiss National Supercomputing Centre could be key in meeting the computational demands following the LHC's high-luminosity upgrade.
-
-Unfortunately, HPC sites are generally more restrictive than the previously mentioned campus resources.
-In addition to limited privilege on workers and lack of FUSE support,
-HPC sites often impose restrictions on network activity,
-including outbound firewalls preventing access to CVMFS.
-
-The US collaboration of the ATLAS project is currently taking advantage of computing resources at various supercomputers in the United States including Cori at NERSC.
-For the deployment of their software the \texttt{uncvmfs} utility is used to unpack entire CVMFS repositories into standalone images (usually in ext4 or squashfs format) which in turn can be used to build Shifter or Singularity images.
-While these images can very well be scaled out onto a large number of nodes inside the NERSC infrastructure,
-the image build process takes around 24 hours which makes it difficult to deploy up-to-date versions of the software on a regular basis.
-As these images contain complete copies of everything in CVMFS,
-each takes on the order of terabytes,
-necessitating careful storage management.
-In addition, the process requires administrators for image creation, deployment, and cleanup.
-Currently, this approach is used in production on the ATLAS and CMS experiments.
-As additional experiments want to take advantage of the resources at NERSC,
-the administrative burden of managing multiple CVMFS images on multiple software versions increases accordingly.
-For the experiments to use the same images (saving time and cost at NERSC),
-multiple groups would have to come to agreement about a single common set of software versions to use and adjust their pipelines elsewhere.
-Both solutions introduce new inconveniences and administrative burden.
-
-More broadly, the use of static, manually managed container images breaks user assumptions about the operation of CVMFS.
-When running jobs using CVMFS,
-researchers can specify the version of each repo to use,
-allowing precise control over software and dependencies.
-Each experiment has its own policies and procedures for choosing a software version;
-some may use bleeding-edge analysis software or another experiment may prefer older, stable versions.
-CVMFS is able to provide multiple customized views of the global filesystem without incurring much additional cost.
-CVMFS also supports some more exotic features,
-such as symlink resolution controlled by environment variables.
-CVMFS as a whole does not map well to the semantics of a traditional filesystem.
-Projecting CVMFS into such a filesystem can capture at most a single, static version of a repo and must necessarily eliminate some features,
-such as environment-based symlink resolution at runtime.
-
-\if 0
-% https://indico.cern.ch/event/587955/contributions/2937411/attachments/1683156/2705423/WahidBhimji-CHEP18-NERSC.pdf
-Another similar approach in use at NERSC is DVMFS.
-Since creating static container images containing CVMFS is costly and difficult to customize,
-DVMFS instead uses Cray DVS IO forwarders to mount a copy of CVMFS served over NFS.
-This allows for less administrator involvement,
-since the mirrored copy of CVMFS can be automatically updated on a regular basis.
-After dealing with several implementation problems,
-DVMFS is currently deployed at NERSC as an alternative to static images.
-While this approach affords more flexibility in choice of repos and software versions,
-it increases the job startup time and places additional requirements on the infrastructure.
-To be usable in production, DVMFS requires a sufficient number of DVS servers to be provisioned.
-DVMFS is nonetheless a viable solution as long as the costs of developing/maintaining the service and allocating infrastructure do not grow too high.
 \fi
+
+\begin{figure}
+\includegraphics[width=\linewidth]{drawings/methods.pdf}
+\label{choices}
+\caption{Global Filesystem Access Methods}
+\end{figure}
+
+\section{Accessing Global Filesystems}
+
+Modern scientific applications depend upon complex software
+repositories that consist of terabytes of data and millions of files.
+Unlike "traditional" high performance applications that are
+single, statically-linked executables, modern applications are
+agglomerations of software that consist of high level scripts,
+multiple executables written in different languages, support
+libraries that may be dynamically linked, and configuration and
+data files loaded at runtime.
+
+In a well-organized project, the necessary software dependencies
+are collected together into a global repository that is accessible
+from all of the sites that intend to use it.  A common arrangement
+is to publish a filesystem that can be mounted from each execution node that intends to use it.  For example, the CVMFS~\cite{globalfs-cise-2015} filesystem is used to publish the software used by all of the major LHC
+experiments on hundreds of computing sites around the world.
+This requires that the computing site provide the CVMFS software,
+and permit worker nodes to access the global network.
+
+Figure~\ref{choices} outlines several broad methods for
+accessing such global filesystems.  First, the most desirable
+method is to {\bf mount} the filesystem directly from worker
+nodes, so that the necessary files can be accessed on demand.
+While this is possible at sites that are especially configured
+to support the LHC, it is often not possible at other HPC sites
+that restrict general network access from worker nodes.
+There are many social and technical reasons for these restrictions, but they generally boil down to either security (avoiding intrusions into worker nodes) or efficiency (discouraging high value workers from waiting on network access.)  As a result, many HPC sites are unable
+to use global software repositories.
+
+If that cannot be accomplished, then the next
+alternative is to {\bf copy} the entire repository to
+a shared parallel or distributed filesystem at the site.
+This has the advantage that the filesystem is already
+mounted and available at worker nodes.  The entire
+repository must be duplicated before it can be used,
+regardless of whether an individual job needs it all.
+A more subtle problem is that most parallel filesystems are
+designed for delivering very large files, and are not at all 
+efficient at delivering deep directory trees that
+consist of small files and large amounts of metadata.
+When a large number of workers begin to use the software
+simultaneously, the system can collapse from the metadata
+load.  ~\cite{metafs-pdsw-2017}  (XXX CITE MORE HERE)
+
+A {\bf container} is often used to reduce the metadata load
+on a parallel filesystem.  If a complex software tree is
+deployed into a container, the underlying filesystem will
+treat the container as a single large file, and be more
+efficient at delivering it to many worker nodes simultaneously.
+However, if the entire repository (measured in TB) is placed into
+the container, it is likely to exceed a number of practical
+limits on container size.  Individual worker nodes may have limited
+local disk space, or may be entirely diskless.  Even if the
+large container fits, it is likely that a given job does not need
+\emph{all} of the repository simultaneously, and so it is wasteful
+to transfer unneeded data.
+
+To have containers of reasonable size, it is necessary to {\bf project}
+the required subset of the global repository into a container of reasonable size that can be transferred to each worker node in an
+efficient way. Of course, each job that depends upon a repository may need a different subset of the files, so it will be necessary to
+maintain multiple container images, within the constraints of available 
+storage space.
+
+In this paper, we explore the technique of projecting a global
+filesystem into local containers, in order to efficiently use
+an HPC facility for a large number of jobs.  This requires striking
+a balance between the size of containers, the amount of storage
+space used, and the efficiency of data transfer.
+We consider two phases of the problem: first, how to describe
+and construct a container that serves the needs of a given job,
+and second, how to efficiently manage resources when multiple
+jobs and multiple containers are required.
+
 
 \section{Defining Application Dependencies}
 
@@ -526,6 +582,7 @@ computed at ingestion into the repository.
 This method relies on the underlying system computing
 and providing this information for verification.
 
+\if 0
 \begin{table*}[t]
 \begin{center}
 \begin{tabular}{|c|r r r|r r r|}
@@ -581,6 +638,32 @@ This table shows the size, number of inodes (rounded to nearest thousand), and t
 of duplicate data that is eliminated using CVMFS.
 \end{center}
 \end{table*}
+
+\fi
+
+\begin{table}
+\begin{center}
+\begin{tabular}{|c|r r r|}
+\hline
+Repository & Total Size & inode Count & Deduplicated \\
+ & (GB) & (K) & Data (GB) \\ \hline
+alice & 3,981 & 27,322 & 2,099 \\
+atlas & 6,195 & 120,599 & 3,761 \\
+boss & 120 & 2,418 & 72\\
+cms & 582 & 26,225 & *2,243\\
+geant4 & 298 & 7,128 & 68 \\
+grid & 31 & 714 & 19 \\
+lhcb & 2,135 & 33,737 & 368,070 \\
+na61 & 5 & 26 & 2 \\
+sft & 3,997 & 128,609 & 2,017 \\ 
+ \hline
+\end{tabular}
+\caption{CVMFS repository sizes.}
+\label{tab:repo-sizes}
+This table shows the size, number of inodes (rounded to nearest thousand), and the amount
+of duplicate data that is eliminated using CVMFS.
+\end{center}
+\end{table}
 
 \section{Realization of CVMFS Projection}
 
@@ -798,7 +881,11 @@ Also note that the non-linear increase in size with increasing selection size me
 Due to duplication, we would expect the resulting combined size to be lower,
 as if choosing 200 packages from the start.
 
-
+\begin{figure}
+    \includegraphics[width=\linewidth]{curated/lxplus_dist/usage_distribution_cdf.pdf}
+    \caption{Usage distribution pulled from CERN LXPlus interactive machines.}
+    \label{fig:usage_distribution}
+\end{figure}
 \if 0
 spread across everyone, lot of commonality/overlap
 few with very high usage, very large number of rarely used
@@ -1174,39 +1261,6 @@ This is because frequently used data can be merged,
 reducing duplication.
 The cache limit then ensures that infrequently used parts are eventually removed.
 
-\begin{figure}
-\includegraphics[width=\linewidth]{curated/time-series/time-series.pdf}
-\label{fig:series}
-\if 0
-zoomed out?
-cache limit, deletes start
-merge tracks writes, it's the dominant factor
-hits grow gradually as cache merges and fills
-deletes help prune useless stuff, remaining should be frequent hits
-far ends are either insert or merge, middle alphas have both
-\fi
-\end{figure}
-
-Figure~\ref{fig:series} shows a single simulation of the image management system,
-with several notable details.
-First, we see that most of the operations are merges.
-This makes sense, as this simulation was at fairly high $\alpha$.
-The total bytes written also closely tracks merges,
-indicating that merging is the dominant source of I/O.
-We can still see inserts over the course of the simulation.
-At more extreme $\alpha$ values,
-we would expect to see one of these operations almost exclusively.
-As the data in cache continues to rise,
-we eventually see the cache limit,
-after which the delete count starts increasing.
-Over the course of the simulation,
-inserts and deletes are filling and emptying the cache such that it remains close to its storage limit.
-We also observe the number of cache hits continue to rise despite deletions.
-As we will see, merging allows for a greater proportion of hits even if the amount of data remains constant.
-This is because frequently used data can be merged,
-reducing duplication.
-The cache limit then ensures that infrequently used parts are eventually removed.
-
 \section{Evaluation}
 
 To evaluate the viability of our approach in automatically deduplicating a container image store,
@@ -1503,15 +1557,15 @@ or equivalently allows the same set of job requests to be served efficiently fro
 \subsection{System-specific Effects of $\alpha$ Threshold}
 
 \begin{figure*}
-\includegraphics[width=0.48\linewidth]{curated/sensitivity/container_efficiency_cache_percent_plt.pdf}
+\includegraphics[width=0.48\linewidth]{curated/sensitivity/container_efficiency_cache.pdf}
 \hfill
-\includegraphics[width=0.48\linewidth]{curated/sensitivity/cache_efficiency_cache_percent_plt.pdf}
-\includegraphics[width=0.48\linewidth]{curated/sensitivity/container_efficiency_request_percent_plt.pdf}
+\includegraphics[width=0.48\linewidth]{curated/sensitivity/cache_efficiency_cache.pdf}
+\includegraphics[width=0.48\linewidth]{curated/sensitivity/container_efficiency_request.pdf}
 \hfill
-\includegraphics[width=0.48\linewidth]{curated/sensitivity/cache_efficiency_request_percent_plt.pdf}
-\includegraphics[width=0.48\linewidth]{curated/sensitivity/container_efficiency_uses_percent_plt.pdf}
+\includegraphics[width=0.48\linewidth]{curated/sensitivity/cache_efficiency_request.pdf}
+\includegraphics[width=0.48\linewidth]{curated/sensitivity/container_efficiency_uses.pdf}
 \hfill
-\includegraphics[width=0.48\linewidth]{curated/sensitivity/cache_efficiency_uses_percent_plt.pdf}
+\includegraphics[width=0.48\linewidth]{curated/sensitivity/cache_efficiency_uses.pdf}
 \label{fig:sensitivity}
 \if 0
 [t] "just buy more cache"
@@ -1620,7 +1674,89 @@ The high cost of creation means that such large images can only be infrequently 
 TODO
 
 \section{Related Work}
-TODO
+
+\subsection{CVMFS}
+The CernVM File System (CVMFS) is a globally distributed filesystem designed for providing efficient,
+read-only access to scientific software.
+CVMFS is primarily used for distribution of High Energy Physics (HEP) software used as part of the Large Hadron Collider (LHC) at CERN.
+Researchers at CERN use CVMFS as the primary means of distributing the analysis and simulation software they develop to the Worldwide LHC Computing Grid (WLCG).
+
+Each WLCG site commits to providing some fixed amount of computational resources for analyzing particle collision events and running simulations.
+Worker nodes at each site must be configured to mount CVMFS as a prerequisite to performing any computational tasks.
+Since CVMFS is implemented as a FUSE module,
+WLCG sites are expected to support FUSE on their worker nodes.
+CVMFS also relies on global configuration files,
+requiring administrative involvement in preparing worker nodes for WLCG jobs.
+In addition, sites generally provision some infrastructure to support CVMFS,
+such as caching proxies to reduce load created by local workers on publicly accessible filesystem servers.
+
+As a result, it is difficult to contribute computational resources toward the LHC experiments without making some site-wide provisioning and configuration changes.
+This is not an issue for the WLCG sites,
+as they provide dedicated computing resources and can customize their setups to meet the requirements of CVMFS.
+For a professor attempting to harness a campus cluster,
+on the other hand, these requirements present a serious barrier.
+Solutions exist such as
+Parrot, a debugging tool and personal filesystem developed at the University of Notre Dame,
+which sidesteps FUSE but still requires unrestricted network access and
+UnCVMFS which locally store all of CVMFS to avoid network access, 
+but relies on large storage and permission mounting.
+For computing at scale, it is important to provide a caching proxy and concise storage,
+which currently require assistance from administrators.
+
+\subsection{HPC}
+
+With the rapidly increasing demands of the LHC experiments at CERN,
+HPC resources are an appealing source of computing power to supplement the WLCG.
+Leadership class machines such as Summit, at Oak Ridge National Laboratory, will by themselves be able to perform a substantial portion of the work of the entire WLCG today.
+Use of national-scale HPC resources across the United States and Europe such as Cori at NERSC, Sierra at Lawrence Livermore National Laboratory, Piz Diant at Swiss National Supercomputing Centre could be key in meeting the computational demands following the LHC's high-luminosity upgrade.
+
+Unfortunately, HPC sites are generally more restrictive than the previously mentioned campus resources.
+In addition to limited privilege on workers and lack of FUSE support,
+HPC sites often impose restrictions on network activity,
+including outbound firewalls preventing access to CVMFS.
+
+The US collaboration of the ATLAS project is currently taking advantage of computing resources at various supercomputers in the United States including Cori at NERSC.
+For the deployment of their software the \texttt{uncvmfs} utility is used to unpack entire CVMFS repositories into standalone images (usually in ext4 or squashfs format) which in turn can be used to build Shifter or Singularity images.
+While these images can very well be scaled out onto a large number of nodes inside the NERSC infrastructure,
+the image build process takes around 24 hours which makes it difficult to deploy up-to-date versions of the software on a regular basis.
+As these images contain complete copies of everything in CVMFS,
+each takes on the order of terabytes,
+necessitating careful storage management.
+In addition, the process requires administrators for image creation, deployment, and cleanup.
+Currently, this approach is used in production on the ATLAS and CMS experiments.
+As additional experiments want to take advantage of the resources at NERSC,
+the administrative burden of managing multiple CVMFS images on multiple software versions increases accordingly.
+For the experiments to use the same images (saving time and cost at NERSC),
+multiple groups would have to come to agreement about a single common set of software versions to use and adjust their pipelines elsewhere.
+Both solutions introduce new inconveniences and administrative burden.
+
+More broadly, the use of static, manually managed container images breaks user assumptions about the operation of CVMFS.
+When running jobs using CVMFS,
+researchers can specify the version of each repo to use,
+allowing precise control over software and dependencies.
+Each experiment has its own policies and procedures for choosing a software version;
+some may use bleeding-edge analysis software or another experiment may prefer older, stable versions.
+CVMFS is able to provide multiple customized views of the global filesystem without incurring much additional cost.
+CVMFS also supports some more exotic features,
+such as symlink resolution controlled by environment variables.
+CVMFS as a whole does not map well to the semantics of a traditional filesystem.
+Projecting CVMFS into such a filesystem can capture at most a single, static version of a repo and must necessarily eliminate some features,
+such as environment-based symlink resolution at runtime.
+
+\if 0
+% https://indico.cern.ch/event/587955/contributions/2937411/attachments/1683156/2705423/WahidBhimji-CHEP18-NERSC.pdf
+Another similar approach in use at NERSC is DVMFS.
+Since creating static container images containing CVMFS is costly and difficult to customize,
+DVMFS instead uses Cray DVS IO forwarders to mount a copy of CVMFS served over NFS.
+This allows for less administrator involvement,
+since the mirrored copy of CVMFS can be automatically updated on a regular basis.
+After dealing with several implementation problems,
+DVMFS is currently deployed at NERSC as an alternative to static images.
+While this approach affords more flexibility in choice of repos and software versions,
+it increases the job startup time and places additional requirements on the infrastructure.
+To be usable in production, DVMFS requires a sufficient number of DVS servers to be provisioned.
+DVMFS is nonetheless a viable solution as long as the costs of developing/maintaining the service and allocating infrastructure do not grow too high.
+\fi
 
 \section{Conclusion}
 TODO
