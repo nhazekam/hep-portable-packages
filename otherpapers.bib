@@ -1,3 +1,68 @@
+@INPROCEEDINGS{minhash,
+author={A. Z. Broder},
+booktitle={Proceedings. Compression and Complexity of SEQUENCES 1997 (Cat. No.97TB100171)},
+title={On the resemblance and containment of documents},
+year={1997},
+volume={},
+number={},
+pages={21-29},
+keywords={random processes;set theory;information retrieval;documents;containment;resemblance;mathematical notions;informal notions;roughly the same;roughly contained;intersection problems;random sampling;fixed size sample;mathematical properties;Rabin fingerprints;World Wide Web;information retrieval;Sampling methods;Web sites;Digital systems;Particle measurements;Fingerprint recognition;Explosions;Algorithm design and analysis;Clustering algorithms;Costs;Testing},
+doi={10.1109/SEQUEN.1997.666900},
+ISSN={},
+month={June},}
+
+
+@INPROCEEDINGS{exa,
+author={J. Bent and G. Grider and B. Kettering and A. Manzanares and M. McClelland and A. Torres and A. Torrez},
+booktitle={012 IEEE 28th Symposium on Mass Storage Systems and Technologies (MSST)},
+title={Storage challenges at Los Alamos National Lab},
+year={2012},
+pages={1-5},
+abstract={There yet exist no truly parallel file systems. Those that make the claim fall short when it comes to providing adequate concurrent write performance at large scale. This limitation causes large usability headaches in HPC. Users need two major capabilities missing from current parallel file systems. One, they need low latency interactivity. Two, they need high bandwidth for large parallel IO; this capability must be resistant to IO patterns and should not require tuning. There are no existing parallel file systems which provide these features. Frighteningly, exascale renders these features even less attainable from currently available parallel file systems. Fortunately, there is a path forward.},
+keywords={parallel databases;HPC;IO patterns;Los Alamos national lab;concurrent write performance;parallel IO;parallel file systems;storage challenges;usability headaches;Bandwidth;Frequency measurement;Hardware;Libraries;Servers;Tuning;Usability},
+doi={10.1109/MSST.2012.6232376},
+ISSN={2160-195X},
+month={April},
+annote={This is another short paper in this author's series developing PLFS, a checkpointing filesystem. It gives some useful explanation about the metadata challenges that make burst buffers necessary in large systems. It also gives details on the expected exascale challenges at LANL.},
+}
+
+@inproceedings{torrent,
+ author = {Dosanjh, Matthew G. F. and Bridges, Patrick G. and Kelly, Susan M. and III, James H.  Laros},
+ title = {A Peer-to-Peer Architecture for Supporting Dynamic Shared Libraries in Large-Scale Systems},
+ booktitle = {Proceedings of the 2012 41st International Conference on Parallel Processing Workshops},
+ series = {ICPPW '12},
+ year = {2012},
+ isbn = {978-0-7695-4795-4},
+ pages = {55--61},
+ numpages = {7},
+ url = {http://dx.doi.org/10.1109/ICPPW.2012.11},
+ doi = {10.1109/ICPPW.2012.11},
+ acmid = {2410450},
+ publisher = {IEEE Computer Society},
+ address = {Washington, DC, USA},
+ keywords = {File systems, High performance computing, Parallel programming, Peer to peer computing, System software},
+} 
+
+
+
+@inproceedings{spindle,
+ author = {Frings, Wolfgang and Ahn, Dong H. and LeGendre, Matthew and Gamblin, Todd and de Supinski, Bronis R. and Wolf, Felix},
+ title = {Massively Parallel Loading},
+ booktitle = {Proceedings of the 27th International ACM Conference on International Conference on Supercomputing},
+ series = {ICS '13},
+ year = {2013},
+ isbn = {978-1-4503-2130-3},
+ location = {Eugene, Oregon, USA},
+ pages = {389--398},
+ numpages = {10},
+ url = {http://doi.acm.org/10.1145/2464996.2465020},
+ doi = {10.1145/2464996.2465020},
+ acmid = {2465020},
+ publisher = {ACM},
+ address = {New York, NY, USA},
+ keywords = {hpc, os/runtime service, scalability},
+} 
+
 @article{
 	pegasus,
 	title = {Pegasus: A Framework for Mapping Complex Scientific Workflows onto Distributed Systems},
@@ -759,3 +824,55 @@ month={May},}
   bibsource = {dblp computer science bibliography, https://dblp.org}
 }
 
+@inproceedings{Jacobsen2015ContainT,
+  title={Contain This , Unleashing Docker for HPC},
+  author={Douglas M. Jacobsen},
+  year={2015}
+}
+
+@inproceedings{rsync,
+  title={The rsync alogirthm},
+  author={Andrew Tridgell and Paul Mackerras},
+  conference={Technical Report TR-C S-96–05},
+  year={1996}
+}
+
+@misc{user-filesys-mount,
+  author = {Jonathan Corbet},
+  title = {Unprivileged filesystem mounts},
+  year = 2018,
+  url = {https://lwn.net/Articles/755593/},
+  urldate = {2019-01-23}
+}
+
+@misc{uncvmfs,
+  author={},
+  title = {uncvmfs},
+  url = {https://github.com/ic-hep/uncvmfs},
+  urldate = {2019-01-23}
+}
+
+@inproceedings{Dolstra2008NixOSAP,
+  title={NixOS: a purely functional Linux distribution},
+  author={Eelco Dolstra and Andres L{\"o}h},
+  booktitle={ICFP},
+  year={2008}
+}
+
+@inproceedings{McLay:2011:BPD:2063348.2063360,
+ author = {McLay, Robert and Schulz, Karl W. and Barth, William L. and Minyard, Tommy},
+ title = {Best Practices for the Deployment and Management of Production HPC Clusters},
+ booktitle = {State of the Practice Reports},
+ series = {SC '11},
+ year = {2011},
+ isbn = {978-1-4503-1139-7},
+ location = {Seattle, Washington},
+ pages = {9:1--9:11},
+ articleno = {9},
+ numpages = {11},
+ url = {http://doi.acm.org/10.1145/2063348.2063360},
+ doi = {10.1145/2063348.2063360},
+ acmid = {2063360},
+ publisher = {ACM},
+ address = {New York, NY, USA},
+} 
